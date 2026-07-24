@@ -1,6 +1,6 @@
 [project]
 name = "corecv"
-version = "0.1.0"
+version = "0.1.1"
 description = "CoreCV: Production-ready Computer Vision Library"
 authors = [
     { name = "Lucas Iturriago", email = "70216214+liturriago@users.noreply.github.com" },
