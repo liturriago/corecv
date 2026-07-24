@@ -56,6 +56,7 @@ from corecv.engine.predictor import CorePredictor, Prediction
 from corecv.engine.rewriter import TargetRewriter
 from corecv.engine.trainer import CoreTrainer
 from corecv.losses import CIoULoss, CombinedSegmentationLoss
+from corecv.metrics import ClassificationMetrics, DetectionMetrics, SegmentationMetrics
 from corecv.models.detector import CoreObjectDetector
 
 logger = logging.getLogger(__name__)
@@ -797,6 +798,7 @@ class CoreModel:
             use_amp=train_cfg.amp,
             ema_decay=train_cfg.ema_decay if train_cfg.ema else None,
             scheduler=scheduler,
+            val_metrics=self._auto_build_val_metrics(device),
             output_dir=train_cfg.output_dir,
         )
 
@@ -1080,8 +1082,14 @@ class CoreModel:
         # Merge kwargs on top (kwargs take precedence)
         base.update(kwargs)  # type: ignore[arg-type]
 
+        # Filter to only TrainingConfig fields
+        valid_fields: frozenset[str] = frozenset(
+            f.name for f in dataclasses.fields(TrainingConfig)
+        )
+        filtered: dict[str, Any] = {k: v for k, v in base.items() if k in valid_fields}
+
         # Validate and return
-        return TrainingConfig(**base)
+        return TrainingConfig(**filtered)
 
     @staticmethod
     def _resolve_export_config(  # noqa: PLR0913
@@ -1170,6 +1178,22 @@ class CoreModel:
         elif self._task == "detection":
             self._loss_fn = CIoULoss()
             logger.info("Auto-instantiated CIoULoss for object detection.")
+
+    def _auto_build_val_metrics(self, device: torch.device) -> nn.Module | None:
+        """Automatically instantiate task-specific validation metrics engine."""
+        if self._val_loader is None:
+            return None
+
+        if self._task == "classification":
+            num_cls = self._num_classes or 10
+            return ClassificationMetrics(num_classes=num_cls, device=device)
+        elif self._task == "segmentation":
+            num_cls = self._num_classes or 19
+            return SegmentationMetrics(num_classes=num_cls, device=device)
+        elif self._task == "detection":
+            num_cls = self._num_classes or 80
+            return DetectionMetrics(num_classes=num_cls, device=device)
+        return None
 
     def _auto_build_dataloaders(  # noqa: PLR0912, PLR0915
         self, config_dict: dict[str, Any]

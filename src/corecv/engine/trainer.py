@@ -461,15 +461,21 @@ class CoreTrainer:
                 self.scheduler.step()
 
             # ---- Print Epoch Summary -----------------------------------
-            val_l: float = float(history["val"][-1].get("val_loss", 0.0))
-            train_l: float = float(train_metrics.get("loss", 0.0))
-            lr_val: float = float(train_metrics.get("lr", 0.0))
-            print(  # noqa: T201
-                f"Epoch {epoch:3d}/{num_epochs:3d} | "
-                f"loss: {train_l:.4f} | "
-                f"val_loss: {val_l:.4f} | "
-                f"lr: {lr_val:.6f}"
-            )
+            parts: list[str] = [f"Epoch {epoch:3d}/{num_epochs:3d}"]
+            # Train metrics
+            for k, v in train_metrics.items():
+                if isinstance(v, float):
+                    parts.append(f"{k}: {v:.4f}")
+                else:
+                    parts.append(f"{k}: {v}")
+            # Validation metrics
+            val_dict: dict[str, Any] = history["val"][-1]
+            for k, v in val_dict.items():
+                if isinstance(v, float):
+                    parts.append(f"{k}: {v:.4f}")
+                else:
+                    parts.append(f"{k}: {v}")
+            print(" | ".join(parts))  # noqa: T201
 
             # ---- Save checkpoint ---------------------------------------
             self.save_checkpoint(
