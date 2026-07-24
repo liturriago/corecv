@@ -656,11 +656,22 @@ class DetectionDataset(Dataset[tuple[Tensor, Tensor, Tensor]]):
                 coordinates.
         """
         labels_dir: Path = self._annotation_path
+        if (labels_dir / "labels").is_dir():
+            labels_dir = labels_dir / "labels"
+
         if not labels_dir.is_dir():
             msg = f"YOLO labels directory not found: {labels_dir}"
             raise FileNotFoundError(msg)
 
-        label_files: list[Path] = sorted(labels_dir.glob("*.txt"))
+        label_files: list[Path] = [
+            p for p in sorted(labels_dir.glob("*.txt")) if p.name != "classes.txt"
+        ]
+        if not label_files and (self._root / "train" / "labels").is_dir():
+            labels_dir = self._root / "train" / "labels"
+            label_files = [
+                p for p in sorted(labels_dir.glob("*.txt")) if p.name != "classes.txt"
+            ]
+
         if not label_files:
             msg = f"No YOLO label files (*.txt) found in {labels_dir}"
             raise FileNotFoundError(msg)
@@ -694,6 +705,12 @@ class DetectionDataset(Dataset[tuple[Tensor, Tensor, Tensor]]):
             if candidate.is_file():
                 return candidate
             candidate = self._root / f"{stem}{ext}"
+            if candidate.is_file():
+                return candidate
+            candidate = self._root / "images" / f"{stem}{ext}"
+            if candidate.is_file():
+                return candidate
+            candidate = label_path.parent.parent / "images" / f"{stem}{ext}"
             if candidate.is_file():
                 return candidate
         msg = f"No matching image found for label file: {label_path.name}"

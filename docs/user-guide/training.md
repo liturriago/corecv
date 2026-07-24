@@ -192,9 +192,10 @@ config = {
 model = CoreModel(config)
 model.train()  # Auto-executes complete training pipeline!
 
-# Option 3: Backbone string with direct train kwargs
+# Option 3: Backbone string with direct train kwargs (or Roboflow data.yaml)
 model = CoreModel("resnet50", task="detection", num_classes=80)
-model.train(data="path/to/coco_dataset", epochs=50, batch_size=16)
+# Supports Roboflow data.yaml directly (auto-detects train/val paths and YOLO format):
+model.train(data="path/to/roboflow/data.yaml", epochs=50, batch_size=16)
 ```
 
 ### Training Configuration Options (`model.train()`)

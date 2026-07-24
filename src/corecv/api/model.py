@@ -1170,7 +1170,9 @@ class CoreModel:
             self._loss_fn = CIoULoss()
             logger.info("Auto-instantiated CIoULoss for object detection.")
 
-    def _auto_build_dataloaders(self, config_dict: dict[str, Any]) -> None:
+    def _auto_build_dataloaders(  # noqa: PLR0912, PLR0915
+        self, config_dict: dict[str, Any]
+    ) -> None:
         """Automatically build train (and optional val) DataLoader if not set."""
         if self._train_loader is not None:
             return
@@ -1218,7 +1220,35 @@ class CoreModel:
 
         elif self._task == "detection":
             ann_path = config_dict.get("annotation_path") or config_dict.get("ann_file")
-            fmt = str(config_dict.get("format", "coco"))
+            fmt = config_dict.get("format")
+            data_p = Path(str(data_path))
+            val_path = config_dict.get("val_data") or config_dict.get("val_dir")
+
+            # Roboflow data.yaml auto-parsing
+            if data_p.is_file() and data_p.suffix in (".yaml", ".yml"):
+                import yaml  # noqa: PLC0415
+
+                with data_p.open("r", encoding="utf-8") as f:
+                    data_yaml = yaml.safe_load(f)
+                if isinstance(data_yaml, dict):
+                    train_rel = data_yaml.get("train", "")
+                    val_rel = data_yaml.get("val", "")
+                    base_dir = data_p.parent
+                    data_path = base_dir / train_rel if train_rel else base_dir
+                    if val_rel:
+                        val_path = base_dir / val_rel
+                    fmt = fmt or "yolo"
+
+            if fmt is None:
+                p_check = Path(str(data_path))
+                if (
+                    (p_check / "labels").is_dir()
+                    or (p_check / "train" / "labels").is_dir()
+                    or list(p_check.glob("*.txt"))
+                ):
+                    fmt = "yolo"
+                else:
+                    fmt = "coco"
 
             train_ds = DetectionDataset(
                 root=str(data_path),
@@ -1230,9 +1260,8 @@ class CoreModel:
             self._train_loader = DataLoader(
                 train_ds, batch_size=batch_size, shuffle=True, num_workers=num_workers
             )
-            logger.info("Auto-built training DetectionDataset from %s", data_path)
+            logger.info("Auto-built training DetectionDataset (%s) from %s", fmt, data_path)
 
-            val_path = config_dict.get("val_data") or config_dict.get("val_dir")
             val_ann = config_dict.get("val_annotation_path") or config_dict.get("val_ann_file")
             if val_path is not None and Path(str(val_path)).exists():
                 val_ds = DetectionDataset(
@@ -1245,7 +1274,7 @@ class CoreModel:
                 self._val_loader = DataLoader(
                     val_ds, batch_size=batch_size, shuffle=False, num_workers=num_workers
                 )
-                logger.info("Auto-built validation DetectionDataset from %s", val_path)
+                logger.info("Auto-built validation DetectionDataset (%s) from %s", fmt, val_path)
 
         elif self._task == "segmentation":
             num_cls = self._num_classes or 19
