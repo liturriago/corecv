@@ -5,7 +5,25 @@ description = "CoreCV: Production-ready Computer Vision Library"
 authors = [
     { name = "Lucas Iturriago", email = "70216214+liturriago@users.noreply.github.com" },
 ]
-license = { text = "MIT" }
+readme = "README.md"
+keywords = ["computer-vision", "pytorch", "deep-learning", "onnx", "executorch", "object-detection", "segmentation"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+[project.urls]
+Homepage = "https://github.com/liturriago/corecv"
+Documentation = "https://github.com/liturriago/corecv"
+Repository = "https://github.com/liturriago/corecv.git"
+
 requires-python = ">=3.10"
 dependencies = [
     "torch>=2.0.0",
