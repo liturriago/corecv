@@ -31,7 +31,11 @@ import numpy as np
 import torch
 from PIL import Image
 
-from corecv.data.transforms import TransformOutput
+from corecv.data.transforms import (
+    ClassificationTransformConfig,
+    TransformOutput,
+    build_transforms,
+)
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -74,27 +78,46 @@ class ClassificationDataset:
 
     def __init__(
         self,
-        root: str,
-        transform: Callable[..., object] | None = None,
+        root: str | Path,
+        transform: Callable[..., object] | bool | None = None,
+        transforms: Callable[..., object] | bool | None = None,
+        image_size: tuple[int, int] = (224, 224),
     ) -> None:
         """Initialise the dataset by scanning *root* for class folders.
 
         Args:
-            root: Path to the dataset root directory containing
-                class-named subdirectories.
-            transform: Optional callable transform pipeline.  Can be a
-                :class:`~corecv.data.transforms.CoordinatedTransform`,
-                an :class:`~albumentations.Compose` pipeline, or any
-                callable that accepts ``image`` as a keyword argument
-                and returns a result containing the transformed image.
-                If ``None``, images are returned as raw ``[C, H, W]``
-                tensors without any augmentation or normalisation.
+            root: Path to dataset root containing class subdirectories.
+            transform: Alias or primary argument for transform pipeline.
+                Pass ``True`` to enable standard default augmentations
+                (random flip, rotation, resize, ImageNet normalization).
+                Pass a callable pipeline to apply custom transforms.
+                If ``False`` or ``None``, applies safe baseline transforms
+                (resize to *image_size*, normalize to ``[0.0, 1.0]``,
+                and convert to ``[C, H, W]`` float32 Tensor).
+            transforms: Alias for *transform*.
+            image_size: Target ``(height, width)`` tuple.
 
         Raises:
             FileNotFoundError: If *root* does not exist.
         """
         self.root: Path = Path(root)
-        self.transform: Callable[..., object] | None = transform
+        self.image_size: tuple[int, int] = image_size
+
+        tf: Callable[..., object] | bool | None = (
+            transform if transform is not None else transforms
+        )
+        if tf is True:
+            self.transform: Callable[..., object] | None = build_transforms(
+                ClassificationTransformConfig(
+                    image_size=image_size,
+                    horizontal_flip_p=0.5,
+                    rotate_limit=15,
+                )
+            )
+        elif callable(tf):
+            self.transform = tf
+        else:
+            self.transform = None
 
         # Discover classes from sorted subdirectory names
         classes: list[str] = sorted([d.name for d in self.root.iterdir() if d.is_dir()])
@@ -110,43 +133,35 @@ class ClassificationDataset:
                     self.samples.append((str(fpath), cls_idx))
 
     def __len__(self) -> int:
-        """Return the total number of samples in the dataset.
-
-        Returns:
-            The number of image-label pairs.
-        """
+        """Return the total number of samples in the dataset."""
         return len(self.samples)
 
     def __getitem__(self, index: int) -> tuple[torch.Tensor, int]:
-        """Return the image-label pair at the given index.
-
-        Loads the image from disk, applies the configured transform
-        pipeline (if any), converts the resulting array to a
-        ``[C, H, W]`` tensor, and returns it alongside the class index.
-
-        Args:
-            index: Sample index (0-based).
-
-        Returns:
-            A tuple ``(image, label)`` where *image* is a ``[C, H, W]``
-            tensor and *label* is an integer class index.
-        """
+        """Return the image-label pair at the given index."""
         path: str
         label: int
         path, label = self.samples[index]
 
-        # Load image as RGB numpy array (H, W, C)
-        image: np.ndarray = np.array(Image.open(path).convert("RGB"))
+        raw_img: Image.Image = Image.open(path).convert("RGB")
 
         # Apply transforms if configured
         if self.transform is not None:
-            result: object = self.transform(image=image)
+            image_np: np.ndarray = np.array(raw_img)
+            result: object = self.transform(image=image_np)
             image_arr: np.ndarray = self._extract_image(result)
+            image_tensor: torch.Tensor = (
+                torch.from_numpy(image_arr).permute(2, 0, 1).float()
+            )
         else:
-            image_arr = image
-
-        # Convert HWC numpy array to CHW tensor
-        image_tensor: torch.Tensor = torch.from_numpy(image_arr).permute(2, 0, 1)
+            # Safe default fallback when transform=False / None:
+            # Resize to target image_size, normalize to [0.0, 1.0], convert to float32 Tensor
+            if raw_img.size != (self.image_size[1], self.image_size[0]):
+                raw_img = raw_img.resize(
+                    (self.image_size[1], self.image_size[0]),
+                    Image.Resampling.BILINEAR,
+                )
+            image_arr = np.array(raw_img, dtype=np.float32) / 255.0
+            image_tensor = torch.from_numpy(image_arr).permute(2, 0, 1)
 
         return image_tensor, label
 

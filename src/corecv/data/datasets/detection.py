@@ -25,7 +25,11 @@ import torch
 from torch import Tensor
 from torch.utils.data import Dataset
 
-from corecv.data.transforms import CoordinatedTransform
+from corecv.data.transforms import (
+    CoordinatedTransform,
+    DetectionTransformConfig,
+    build_transforms,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -212,7 +216,8 @@ class DetectionDataset(Dataset[tuple[Tensor, Tensor, Tensor]]):
         root: str | Path,
         annotation_path: str | Path | None = None,
         format: str = "coco",
-        transform: CoordinatedTransform | None = None,
+        transform: CoordinatedTransform | bool | None = None,
+        transforms: CoordinatedTransform | bool | None = None,
         image_size: tuple[int, int] = (640, 640),
         cache_dir: str | Path | None = None,
         use_cache: bool = True,
@@ -225,12 +230,17 @@ class DetectionDataset(Dataset[tuple[Tensor, Tensor, Tensor]]):
             root: Root directory containing images.
             annotation_path: Path to annotation file or label dir.
             format: Annotation format (``"coco"`` or ``"yolo"``).
-            transform: Optional transform pipeline.
+            transform: Transform pipeline or boolean flag. Pass ``True``
+                to enable standard default detection augmentations
+                (random flip, rotation, resize, ImageNet normalization).
+                If ``False`` or ``None``, applies safe baseline transforms
+                (resize to *image_size*, normalize to ``[0.0, 1.0]``,
+                and convert to ``[C, H, W]`` float32 Tensor).
+            transforms: Alias for *transform*.
             image_size: Target ``(height, width)`` for images.
             cache_dir: Directory for cache file.
             use_cache: Whether to use on-disk caching.
-            bbox_format: Output bbox format
-                (``"xyxy"`` or ``"norm_xyxy"``).
+            bbox_format: Output bbox format (``"xyxy"`` or ``"norm_xyxy"``).
             class_names: Optional list of class names.
         """
         super().__init__()
@@ -248,10 +258,26 @@ class DetectionDataset(Dataset[tuple[Tensor, Tensor, Tensor]]):
             raise ValueError(msg)
         self._format: str = format
 
-        self._transform: CoordinatedTransform | None = transform
         self._image_size: tuple[int, int] = image_size
         self._bbox_format: str = bbox_format
         self._use_cache: bool = use_cache
+
+        tf: CoordinatedTransform | bool | None = (
+            transform if transform is not None else transforms
+        )
+        if tf is True:
+            self._transform: CoordinatedTransform | None = build_transforms(
+                DetectionTransformConfig(
+                    image_size=self._image_size,
+                    horizontal_flip_p=0.5,
+                    rotate_limit=10,
+                    bbox_format="pascal_voc",
+                )
+            )
+        elif callable(tf):
+            self._transform = tf
+        else:
+            self._transform = None
 
         # Resolve annotation path
         if annotation_path is not None:

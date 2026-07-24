@@ -980,3 +980,55 @@ class TestDetectionDatasetErrors:
         root.mkdir()
         with pytest.raises(FileNotFoundError, match="COCO annotation file not found"):
             DetectionDataset(str(root), format="coco", use_cache=False)
+
+
+# ======================================================================
+# Boolean Transform Flag Tests (transform=True / transforms=True)
+# ======================================================================
+
+
+class TestBooleanTransformSupport:
+    """Verify transform=True / transforms=True boolean flag across datasets."""
+
+    def test_classification_boolean_transform(self, class_dataset_root: Path) -> None:
+        """ClassificationDataset with transform=True automatically builds default pipeline."""
+        dataset = ClassificationDataset(
+            str(class_dataset_root),
+            transform=True,
+            image_size=(224, 224),
+        )
+        assert dataset.transform is not None
+        image, label = dataset[0]
+        assert isinstance(image, torch.Tensor)
+        assert image.shape == (3, 224, 224)
+        assert isinstance(label, int)
+
+    def test_detection_boolean_transform(self, coco_root: Path) -> None:
+        """DetectionDataset with transforms=True automatically builds default pipeline."""
+        dataset = DetectionDataset(
+            str(coco_root),
+            format="coco",
+            transforms=True,
+            image_size=(640, 640),
+            use_cache=False,
+        )
+        assert dataset._transform is not None
+        image, bboxes, labels = dataset[0]
+        assert isinstance(image, torch.Tensor)
+        assert image.shape == (3, 640, 640)
+        assert bboxes.ndim == 2
+
+    def test_segmentation_boolean_transform(self, seg_root: Path) -> None:
+        """SegmentationDataset with transform=True automatically builds default pipeline."""
+        dataset = SegmentationDataset(
+            str(seg_root),
+            num_classes=4,
+            transform=True,
+            image_size=(256, 256),
+        )
+        assert dataset.transforms is not None
+        image, mask = dataset[0]
+        assert isinstance(image, torch.Tensor)
+        assert image.shape == (3, 256, 256)
+        assert mask.shape == (256, 256)
+
