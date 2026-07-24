@@ -1,6 +1,7 @@
 site_name: "CoreCV - Unified Vision Engine"
 site_description: "Production-ready Computer Vision Library with Edge-Aware Export and Unified API"
 site_author: "CoreCV Team"
+site_url: "https://liturriago.github.io/corecv/"
 repo_url: "https://github.com/liturriago/corecv"
 repo_name: liturriago/corecv
 edit_uri: edit/main/docs/
