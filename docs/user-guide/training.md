@@ -61,6 +61,8 @@ CoreCV provides a polymorphic training engine managed by `CoreTrainer` and acces
     )
 
     # 2. Setup Dataset and Loaders
+    # Note: If `transform=None` is passed (or omitted), CoreCV applies safe default 
+    # preprocessing: image normalization to [0.0, 1.0] and conversion to float32 Tensor (C, H, W).
     train_dataset = CocoDetectionDataset(
         img_folder="coco/images/train2017",
         ann_file="coco/annotations/instances_train2017.json",
