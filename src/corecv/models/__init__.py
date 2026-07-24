@@ -28,6 +28,7 @@ from corecv.models.heads import (
     QueryDetectionHead,
     ResUNetDecoder,
 )
+from corecv.models.necks import FPN, PANet
 
 __all__ = [
     # MobileNetV3
@@ -53,6 +54,9 @@ __all__ = [
     "ASPPDecoder",
     "DecoupledAnchorFreeHead",
     "QueryDetectionHead",
+    # Necks
+    "FPN",
+    "PANet",
     # Detector
     "CoreObjectDetector",
 ]

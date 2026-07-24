@@ -45,6 +45,7 @@ import torch
 from torch import nn
 from torch.utils.data import DataLoader
 
+import corecv.models  # noqa: F401
 from corecv.config.schemas import load_config
 from corecv.core.registry import get_backbone, get_head, get_neck
 from corecv.data.datasets.classification import ClassificationDataset
