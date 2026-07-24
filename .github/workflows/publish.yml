@@ -1,0 +1,43 @@
+name: Publish CoreCV to PyPI
+
+on:
+  push:
+    tags:
+      - 'v*'
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Build and Publish CoreCV Package
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write  # Mandatory for PyPI OIDC Trusted Publishing
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Build source distribution and wheel
+        run: uv build
+
+      - name: Publish to PyPI (Official PyPA Action)
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          # Works with PyPI Trusted Publisher (OIDC) or PYPI_API_TOKEN secret
+          password: ${{ secrets.PYPI_API_TOKEN }}
+          skip-existing: true
