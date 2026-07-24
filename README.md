@@ -170,7 +170,9 @@ print(f"ExecuTorch Model: {paths['executorch']}")
 
 ## Documentation
 
-CoreCV includes a comprehensive MkDocs documentation site with user guides, architecture details, and full API references.
+The official CoreCV documentation is hosted on GitHub Pages:
+
+👉 **[https://liturriago.github.io/corecv/](https://liturriago.github.io/corecv/)**
 
 ### Build and Serve Locally
 

@@ -31,7 +31,7 @@ dependencies = [
 
 [project.urls]
 Homepage = "https://github.com/liturriago/corecv"
-Documentation = "https://github.com/liturriago/corecv"
+Documentation = "https://liturriago.github.io/corecv/"
 Repository = "https://github.com/liturriago/corecv.git"
 
 [project.optional-dependencies]
