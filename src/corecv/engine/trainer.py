@@ -460,6 +460,17 @@ class CoreTrainer:
             ):
                 self.scheduler.step()
 
+            # ---- Print Epoch Summary -----------------------------------
+            val_l: float = float(history["val"][-1].get("val_loss", 0.0))
+            train_l: float = float(train_metrics.get("loss", 0.0))
+            lr_val: float = float(train_metrics.get("lr", 0.0))
+            print(  # noqa: T201
+                f"Epoch {epoch:3d}/{num_epochs:3d} | "
+                f"loss: {train_l:.4f} | "
+                f"val_loss: {val_l:.4f} | "
+                f"lr: {lr_val:.6f}"
+            )
+
             # ---- Save checkpoint ---------------------------------------
             self.save_checkpoint(
                 path=str(self.output_dir / f"epoch_{epoch}.pt"),
