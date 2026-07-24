@@ -1,7 +1,7 @@
 # CoreCV - Unified Vision Engine
 
 <p align="center">
-  <img src="assets/logo-tagline.svg" alt="CoreCV Logo" width="600">
+  <img src="https://raw.githubusercontent.com/liturriago/corecv/main/assets/logo-tagline.svg" alt="CoreCV Logo" width="600">
 </p>
 
 <p align="center">
@@ -12,7 +12,7 @@
   <a href="#overview">Overview</a> •
   <a href="#key-features">Key Features</a> •
   <a href="#installation">Installation</a> •
-  <a href="#quickstart-3-lines">Quickstart</a> •
+  <a href="#quickstart">Quickstart</a> •
   <a href="#model-zoo-catalogue">Model Zoo</a> •
   <a href="#edge-hardware-export">Edge Export</a> •
   <a href="#documentation">Documentation</a>
@@ -65,7 +65,21 @@ pip install corecv
 
 ---
 
-## Quickstart (3 Lines)
+## Quickstart
+
+### 1-Line Config-Driven Training (YAML / Dict)
+
+```python
+from corecv.api import CoreModel
+
+# 1. Load entire model architecture, dataset, & training config from a single YAML file
+model = CoreModel("configs/detection_config.yaml")
+
+# 2. Train - Auto-builds model, dataloaders, loss functions, and executes pipeline!
+model.train()
+```
+
+### 3-Line Python Quickstart
 
 ```python
 from corecv.api import CoreModel
