@@ -1,0 +1,48 @@
+# CoreCV - .gitignore
+
+# Squad state (orchestrator tracking - NOT versioned)
+.corecv_squad/
+
+# Agent config
+opencode.json
+SKILL.md
+
+# Python
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+*.py[cod]
+*$py.class
+*.egg-info/
+*.egg
+dist/
+build/
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Torch export artifacts
+*.pt
+*.pth
+*.onnx
+*.pte
+
+# Documentation build output
+site/
+
+# Local checkpoints & exports
+checkpoints/
+exports/

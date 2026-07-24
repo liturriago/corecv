@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 262 82" width="100%" height="100%">
+  <!-- ISOTIPO SÓLIDO -->
+  <g transform="translate(2, 2)">
+    <path d="M 42,10 L 20,24 L 20,52 L 42,66" 
+          fill="none" 
+          stroke="#00E1DF" 
+          stroke-width="5.5" 
+          stroke-linecap="round" 
+          stroke-linejoin="round"/>
+    
+    <rect x="30.5" y="34.5" width="7" height="7" rx="2" ry="2" 
+          transform="rotate(45 34 38)" 
+          fill="#00F5A0"/>
+
+    <path d="M 42,24 L 63,38 L 42,52" 
+          fill="none" 
+          stroke="#3390DE" 
+          stroke-width="5.5" 
+          stroke-linecap="round" 
+          stroke-linejoin="round"/>
+  </g>
+
+  <!-- TIPOGRAFÍA CORECV -->
+  <text x="84" y="52" 
+        font-family="'Inter', 'Outfit', 'Montserrat', 'Space Grotesk', system-ui, sans-serif" 
+        font-weight="900" 
+        font-size="44" 
+        fill="#0F172A" 
+        stroke="#FFFFFF" 
+        stroke-width="3.2" 
+        stroke-linejoin="round" 
+        paint-order="stroke fill" 
+        letter-spacing="-1.8">
+    Core<tspan fill="#1AB9DF" stroke="none">CV</tspan>
+  </text>
+  
+  <!-- SUBTÍTULO ACTUALIZADO -->
+  <text x="86" y="70" 
+        font-family="'Inter', 'Space Grotesk', system-ui, sans-serif" 
+        font-weight="700" 
+        font-size="9.2" 
+        fill="#64748B" 
+        letter-spacing="1.8">
+    UNIFIED VISION ENGINE
+  </text>
+</svg>

@@ -1,0 +1,89 @@
+site_name: "CoreCV - Unified Vision Engine"
+site_description: "Production-ready Computer Vision Library with Edge-Aware Export and Unified API"
+site_author: "CoreCV Team"
+repo_url: "https://github.com/liturriago/corecv"
+repo_name: liturriago/corecv
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  logo: assets/logo-icon.svg
+  favicon: assets/logo-icon.svg
+  palette:
+    - scheme: default
+      primary: slate
+      accent: cyan
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - scheme: slate
+      primary: slate
+      accent: cyan
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.instant
+    - navigation.sections
+    - navigation.top
+    - search.highlight
+    - search.share
+    - content.code.copy
+    - content.code.annotate
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: ["src"]
+          options:
+            show_source: true
+            show_root_heading: true
+            show_root_toc_entry: true
+            show_docstring_examples: true
+            show_docstring_description: true
+            show_docstring_parameters: true
+            show_docstring_returns: true
+            show_docstring_raises: true
+            show_docstring_warnings: false
+            docstring_style: google
+            merge_init_into_class: true
+            heading_level: 3
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.snippets
+  - pymdownx.emoji
+  - toc:
+      permalink: true
+
+copyright: Copyright &copy; 2026 CoreCV
+
+nav:
+  - Home: index.md
+  - Getting Started:
+      - Quickstart: getting-started/quickstart.md
+  - User Guide:
+      - Model Zoo: user-guide/zoo.md
+      - Training: user-guide/training.md
+      - Inference: user-guide/inference.md
+      - Exporting: user-guide/exporting.md
+      - Architecture: user-guide/architecture.md
+  - API Reference:
+      - CoreModel: api-reference/model.md
+      - Engine: api-reference/engine.md
+      - Models & Components: api-reference/models.md
+      - Losses & Assigners: api-reference/losses.md
+      - Metrics & Datasets: api-reference/metrics.md
+      - Export & Optimization: api-reference/export.md
+      - Registry: api-reference/registry.md
