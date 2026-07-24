@@ -162,7 +162,7 @@ class SegmentationDataset(Dataset[tuple[Tensor, Tensor]]):
         num_classes: int,
         transforms: CoordinatedTransform | bool | None = None,
         transform: CoordinatedTransform | bool | None = None,
-        image_size: tuple[int, int] = (512, 512),
+        image_size: tuple[int, int] | None = None,
         cache_dir: str | Path | None = None,
         ignore_index: int | None = None,
     ) -> None:
@@ -175,9 +175,6 @@ class SegmentationDataset(Dataset[tuple[Tensor, Tensor]]):
             transforms: Transform pipeline or boolean flag. Pass ``True``
                 to enable standard default segmentation augmentations
                 (random flip, rotation, resize, ImageNet normalization).
-                If ``False`` or ``None``, applies safe baseline transforms
-                (resize to *image_size*, normalize to ``[0.0, 1.0]``,
-                and convert to ``[C, H, W]`` float32 Tensor).
             transform: Alias for *transforms*.
             image_size: Target ``(height, width)`` tuple.
             cache_dir: Directory for cache file. Defaults to *root*.
@@ -186,15 +183,16 @@ class SegmentationDataset(Dataset[tuple[Tensor, Tensor]]):
         self._root: Path = Path(root).resolve().absolute()
         self._num_classes: int = num_classes
         self._ignore_index: int | None = ignore_index
-        self._image_size: tuple[int, int] = image_size
+        self._image_size: tuple[int, int] | None = image_size
 
         tf: CoordinatedTransform | bool | None = (
             transforms if transforms is not None else transform
         )
         if tf is True:
+            target_size: tuple[int, int] = image_size or (512, 512)
             self._transforms: CoordinatedTransform | None = build_transforms(
                 SegmentationTransformConfig(
-                    image_size=image_size,
+                    image_size=target_size,
                     ignore_index=ignore_index if ignore_index is not None else 255,
                     horizontal_flip_p=0.5,
                     rotate_limit=15,
@@ -267,19 +265,19 @@ class SegmentationDataset(Dataset[tuple[Tensor, Tensor]]):
             image_tensor: Tensor = torch.from_numpy(image).permute(2, 0, 1).float()
         else:
             # Safe default fallback when transforms=False / None:
-            # Resize to target image_size, normalize to [0.0, 1.0], convert to float32 Tensor
-            h, w = image.shape[:2]
-            if (h, w) != self._image_size:
-                img_pil = Image.fromarray(image).resize(
-                    (self._image_size[1], self._image_size[0]),
-                    Image.Resampling.BILINEAR,
-                )
-                mask_pil = Image.fromarray(mask).resize(
-                    (self._image_size[1], self._image_size[0]),
-                    Image.Resampling.NEAREST,
-                )
-                image = np.array(img_pil, dtype=np.uint8)
-                mask = np.array(mask_pil, dtype=np.uint8)
+            if self._image_size is not None:
+                h, w = image.shape[:2]
+                if (h, w) != self._image_size:
+                    img_pil = Image.fromarray(image).resize(
+                        (self._image_size[1], self._image_size[0]),
+                        Image.Resampling.BILINEAR,
+                    )
+                    mask_pil = Image.fromarray(mask).resize(
+                        (self._image_size[1], self._image_size[0]),
+                        Image.Resampling.NEAREST,
+                    )
+                    image = np.array(img_pil, dtype=np.uint8)
+                    mask = np.array(mask_pil, dtype=np.uint8)
             image_tensor = torch.from_numpy(image).permute(2, 0, 1).float() / 255.0
 
         mask_tensor: Tensor = torch.from_numpy(mask).long()

@@ -990,10 +990,10 @@ class TestDetectionDatasetErrors:
 class TestBooleanTransformSupport:
     """Verify transform=True / transforms=True boolean flag across datasets."""
 
-    def test_classification_boolean_transform(self, class_dataset_root: Path) -> None:
+    def test_classification_boolean_transform(self, classification_root: Path) -> None:
         """ClassificationDataset with transform=True automatically builds default pipeline."""
         dataset = ClassificationDataset(
-            str(class_dataset_root),
+            str(classification_root),
             transform=True,
             image_size=(224, 224),
         )
@@ -1003,10 +1003,10 @@ class TestBooleanTransformSupport:
         assert image.shape == (3, 224, 224)
         assert isinstance(label, int)
 
-    def test_detection_boolean_transform(self, coco_root: Path) -> None:
+    def test_detection_boolean_transform(self, detection_coco_root: Path) -> None:
         """DetectionDataset with transforms=True automatically builds default pipeline."""
         dataset = DetectionDataset(
-            str(coco_root),
+            str(detection_coco_root),
             format="coco",
             transforms=True,
             image_size=(640, 640),
@@ -1018,11 +1018,11 @@ class TestBooleanTransformSupport:
         assert image.shape == (3, 640, 640)
         assert bboxes.ndim == 2
 
-    def test_segmentation_boolean_transform(self, seg_root: Path) -> None:
+    def test_segmentation_boolean_transform(self, segmentation_root: Path) -> None:
         """SegmentationDataset with transform=True automatically builds default pipeline."""
         dataset = SegmentationDataset(
-            str(seg_root),
-            num_classes=4,
+            str(segmentation_root),
+            num_classes=10,
             transform=True,
             image_size=(256, 256),
         )

@@ -169,6 +169,34 @@ model = CoreModel("configs/yolo_detection.yaml", task="detection")
 model = CoreModel("checkpoints/model_epoch_50.pt", task="detection")
 ```
 
+### 1-Line Training (Zero Boilerplate)
+
+CoreModel supports **fully automatic dataset loading, loss instantiation, and training execution**. Simply pass your dataset path (`data="path/to/dataset"`) or a full configuration (`dict` or `.yaml`) and call `model.train()` directly without manually instantiating `DataLoader`, `Dataset`, or Loss functions!
+
+```python
+# Option 1: Everything defined in a single YAML file
+model = CoreModel("configs/detection_config.yaml")
+model.train()  # Builds model, dataset, dataloader, loss, and runs training loop!
+
+# Option 2: Everything defined in a single Python dictionary
+config = {
+    "model_name": "resnet50",
+    "task": "detection",
+    "num_classes": 80,
+    "neck_type": "panet",
+    "data": "path/to/coco_dataset",
+    "epochs": 50,
+    "batch_size": 16,
+    "target_hardware": "edge",
+}
+model = CoreModel(config)
+model.train()  # Auto-executes complete training pipeline!
+
+# Option 3: Backbone string with direct train kwargs
+model = CoreModel("resnet50", task="detection", num_classes=80)
+model.train(data="path/to/coco_dataset", epochs=50, batch_size=16)
+```
+
 ### Training Configuration Options (`model.train()`)
 
 ```python
@@ -186,3 +214,4 @@ from corecv.api.model import TrainingConfig
 cfg = TrainingConfig(epochs=20, lr=0.001, batch_size=16, target_hardware="edge")
 model.train(cfg)
 ```
+

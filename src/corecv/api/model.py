@@ -47,10 +47,14 @@ from torch.utils.data import DataLoader
 
 from corecv.config.schemas import load_config
 from corecv.core.registry import get_backbone, get_head, get_neck
+from corecv.data.datasets.classification import ClassificationDataset
+from corecv.data.datasets.detection import DetectionDataset
+from corecv.data.datasets.segmentation import SegmentationDataset
 from corecv.engine.exporter import CoreExporter
 from corecv.engine.predictor import CorePredictor, Prediction
 from corecv.engine.rewriter import TargetRewriter
 from corecv.engine.trainer import CoreTrainer
+from corecv.losses import CIoULoss, CombinedSegmentationLoss
 from corecv.models.detector import CoreObjectDetector
 
 logger = logging.getLogger(__name__)
@@ -321,10 +325,10 @@ class CoreModel:
         >>> paths = model.export(format="onnx", target_hardware="edge")
     """
 
-    def __init__(  # noqa: PLR0913, PLR0912
+    def __init__(  # noqa: PLR0913, PLR0912, PLR0915
         self,
         model: nn.Module | str | Path | dict[str, Any],
-        task: Literal["classification", "segmentation", "detection"],
+        task: Literal["classification", "segmentation", "detection"] | None = None,
         input_size: tuple[int, int] = _DEFAULT_INPUT_SIZE,
         device: torch.device | None = None,
         num_classes: int | None = None,
@@ -340,40 +344,25 @@ class CoreModel:
                 ``.pth`` checkpoint, a path to a ``.yaml`` / ``.yml``
                 configuration file, a plain registered backbone name
                 (e.g. ``"resnet18"``), or a raw configuration ``dict``
-                containing at minimum ``model_name``.
-            task: Task type discriminant.
+                containing model and training specifications.
+            task: Task type discriminant. If ``None``, inferred from the
+                configuration dictionary / YAML file, defaulting to
+                ``"classification"``.
             input_size: Input ``(height, width)``.
             device: Target device (auto-detected if ``None``).
             num_classes: Number of output classes (inferred if ``None``).
-            pretrained: Whether to load pretrained backbone weights. Only used
-                when *model* is a plain backbone name string or a configuration
-                ``dict``.  Default ``True``.
-            neck: Registered neck name (e.g. ``"fpn"``, ``"panet"``).  Only used
-                when building from a backbone name or ``dict``.  If ``None``, the
-                task-specific default is used.
-            head: Registered head name (e.g. ``"linear_classification"``,
-                ``"decoupled_anchor_free"``).  Only used when building from a
-                backbone name or ``dict``.  If ``None``, the task-specific
-                default is used.
+            pretrained: Whether to load pretrained backbone weights.
+            neck: Registered neck name (e.g. ``"fpn"``, ``"panet"``).
+            head: Registered head name (e.g. ``"decoupled_anchor_free"``).
             **kwargs: Additional configuration entries forwarded to component
-                constructors via dynamic kwarg inspection.  Only used when
-                building from a backbone name or ``dict``.
-
-        Raises:
-            ValueError: If ``task`` is not a supported value, or if
-                *model* has an unsupported file extension.
-            TypeError: If *model* is not an ``nn.Module``, ``str``,
-                ``Path``, or ``dict``.
-            FileNotFoundError: If a file path does not exist.
+                constructors and stored for training execution.
         """
-        if task not in _SUPPORTED_TASKS:
-            raise ValueError(
-                _ERR_UNSUPPORTED_TASK.format(task, sorted(_SUPPORTED_TASKS))
-            )
+        self._config_dict: dict[str, Any] = {}
 
         # --- Polymorphic model loading --------------------------------
         if isinstance(model, dict):
-            merged = {**model, "task": task, "pretrained": pretrained}
+            t = task or model.get("task", "classification")
+            merged = {**model, "task": t, "pretrained": pretrained}
             if num_classes is not None:
                 merged["num_classes"] = num_classes
             if neck is not None:
@@ -381,27 +370,35 @@ class CoreModel:
             if head is not None:
                 merged["head_type"] = head
             merged.update(kwargs)
+            self._config_dict = dict(merged)
             self._model = self._build_model_from_config(merged)
+            task = t
         elif isinstance(model, (str, Path)):
             path = Path(model)
             ext = path.suffix.lower()
             if ext in (".pt", ".pth"):
-                # Load from checkpoint — _load_from_checkpoint sets self._model
                 checkpoint_config = self._load_from_checkpoint(path)
-                # Allow checkpoint metadata to fill optional fields
+                self._config_dict = dict(checkpoint_config)
                 num_classes = (
                     num_classes
                     if num_classes is not None
                     else checkpoint_config.get("num_classes")
                 )
+                t = task or checkpoint_config.get("task", "classification")
+                task = t
             elif ext in (".yaml", ".yml"):
-                # Build model from YAML configuration
-                self._load_from_config(path)
+                raw_cfg = self._load_from_config(path)
+                t = task or raw_cfg.get("task", "classification")
+                self._config_dict = dict(raw_cfg)
+                if num_classes is not None:
+                    self._config_dict["num_classes"] = num_classes
+                self._config_dict.update(kwargs)
+                task = t
             elif ext == "":
-                # Plain backbone name — build dynamically
+                t = task or "classification"
                 config: dict[str, Any] = {
                     "model_name": str(model),
-                    "task": task,
+                    "task": t,
                     "num_classes": num_classes or 1000,
                     "pretrained": pretrained,
                 }
@@ -410,16 +407,24 @@ class CoreModel:
                 if head is not None:
                     config["head_type"] = head
                 config.update(kwargs)
+                self._config_dict = dict(config)
                 self._model = self._build_model_from_config(config)
+                task = t
             else:
                 raise ValueError(
                     _ERR_MODEL_EXTENSION.format(ext)
                 )
         elif isinstance(model, nn.Module):
             self._model = model
+            task = task or "classification"
         else:
             raise TypeError(
                 _ERR_MODEL_TYPE.format(type(model).__name__)
+            )
+
+        if task not in _SUPPORTED_TASKS:
+            raise ValueError(
+                _ERR_UNSUPPORTED_TASK.format(task, sorted(_SUPPORTED_TASKS))
             )
 
         # --- Core attributes -------------------------------------------
@@ -722,6 +727,28 @@ class CoreModel:
             >>> # Mixed (kwargs override dict)
             >>> history = model.train({"epochs": 10}, batch_size=128)
         """
+        # --- Merge full configuration for auto-building -----------------
+        merged_config: dict[str, Any] = dict(self._config_dict)
+        if isinstance(config, str):
+            import yaml  # noqa: PLC0415
+            p_obj = Path(config)
+            if p_obj.exists():
+                with p_obj.open("r", encoding="utf-8") as f:
+                    raw_y = yaml.safe_load(f)
+                if isinstance(raw_y, dict):
+                    merged_config.update(raw_y)
+        elif isinstance(config, dict):
+            merged_config.update(config)
+        elif isinstance(config, TrainingConfig):
+            merged_config.update(
+                {f.name: getattr(config, f.name) for f in dataclasses.fields(config)}
+            )
+        merged_config.update(kwargs)
+
+        # --- Auto-build missing loss_fn and dataloaders ----------------
+        self._auto_build_loss_fn()
+        self._auto_build_dataloaders(merged_config)
+
         # --- Resolve and validate training config -----------------------
         train_cfg: TrainingConfig = self._resolve_train_config(
             config, target_hardware=target_hardware, **kwargs
@@ -729,7 +756,11 @@ class CoreModel:
 
         # --- Check required components ----------------------------------
         if self._train_loader is None:
-            raise ValueError(_ERR_MISSING_DATALOADER)
+            msg = (
+                _ERR_MISSING_DATALOADER
+                + " Alternatively, provide a 'data' path in config or train(data='...')."
+            )
+            raise ValueError(msg)
         if self._loss_fn is None:
             raise ValueError(_ERR_MISSING_LOSS_FN)
 
@@ -1124,6 +1155,124 @@ class CoreModel:
             num_classes=self._num_classes,
         )
 
+    def _auto_build_loss_fn(self) -> None:
+        """Automatically instantiate default loss function for the task if not set."""
+        if self._loss_fn is not None:
+            return
+
+        if self._task == "classification":
+            self._loss_fn = nn.CrossEntropyLoss()
+            logger.info("Auto-instantiated CrossEntropyLoss for classification.")
+        elif self._task == "segmentation":
+            self._loss_fn = CombinedSegmentationLoss()
+            logger.info("Auto-instantiated CombinedSegmentationLoss for segmentation.")
+        elif self._task == "detection":
+            self._loss_fn = CIoULoss()
+            logger.info("Auto-instantiated CIoULoss for object detection.")
+
+    def _auto_build_dataloaders(self, config_dict: dict[str, Any]) -> None:
+        """Automatically build train (and optional val) DataLoader if not set."""
+        if self._train_loader is not None:
+            return
+
+        data_path: Any = (
+            config_dict.get("data")
+            or config_dict.get("data_dir")
+            or config_dict.get("data_path")
+            or config_dict.get("dataset")
+            or config_dict.get("train_data")
+            or config_dict.get("train_dir")
+            or config_dict.get("root")
+        )
+        if data_path is None or not Path(str(data_path)).exists():
+            return
+
+        batch_size: int = int(config_dict.get("batch_size", 16))
+        num_workers: int = int(config_dict.get("num_workers", 2))
+        img_size: tuple[int, int] = (
+            config_dict.get("input_size") or self._input_size
+        )
+
+        if self._task == "classification":
+            train_ds = ClassificationDataset(
+                root=str(data_path), image_size=img_size, transforms=True
+            )
+            self._train_loader = DataLoader(
+                train_ds, batch_size=batch_size, shuffle=True, num_workers=num_workers
+            )
+            logger.info("Auto-built training ClassificationDataset from %s", data_path)
+
+            val_path = (
+                config_dict.get("val_data")
+                or config_dict.get("val_dir")
+                or config_dict.get("val")
+            )
+            if val_path is not None and Path(str(val_path)).exists():
+                val_ds = ClassificationDataset(
+                    root=str(val_path), image_size=img_size, transforms=False
+                )
+                self._val_loader = DataLoader(
+                    val_ds, batch_size=batch_size, shuffle=False, num_workers=num_workers
+                )
+                logger.info("Auto-built validation ClassificationDataset from %s", val_path)
+
+        elif self._task == "detection":
+            ann_path = config_dict.get("annotation_path") or config_dict.get("ann_file")
+            fmt = str(config_dict.get("format", "coco"))
+
+            train_ds = DetectionDataset(
+                root=str(data_path),
+                annotation_path=str(ann_path) if ann_path else None,
+                format=fmt,
+                image_size=img_size,
+                transforms=True,
+            )
+            self._train_loader = DataLoader(
+                train_ds, batch_size=batch_size, shuffle=True, num_workers=num_workers
+            )
+            logger.info("Auto-built training DetectionDataset from %s", data_path)
+
+            val_path = config_dict.get("val_data") or config_dict.get("val_dir")
+            val_ann = config_dict.get("val_annotation_path") or config_dict.get("val_ann_file")
+            if val_path is not None and Path(str(val_path)).exists():
+                val_ds = DetectionDataset(
+                    root=str(val_path),
+                    annotation_path=str(val_ann) if val_ann else None,
+                    format=fmt,
+                    image_size=img_size,
+                    transforms=False,
+                )
+                self._val_loader = DataLoader(
+                    val_ds, batch_size=batch_size, shuffle=False, num_workers=num_workers
+                )
+                logger.info("Auto-built validation DetectionDataset from %s", val_path)
+
+        elif self._task == "segmentation":
+            num_cls = self._num_classes or 19
+            train_ds = SegmentationDataset(
+                root=str(data_path),
+                num_classes=num_cls,
+                image_size=img_size,
+                transforms=True,
+            )
+            self._train_loader = DataLoader(
+                train_ds, batch_size=batch_size, shuffle=True, num_workers=num_workers
+            )
+            logger.info("Auto-built training SegmentationDataset from %s", data_path)
+
+            val_path = config_dict.get("val_data") or config_dict.get("val_dir")
+            if val_path is not None and Path(str(val_path)).exists():
+                val_ds = SegmentationDataset(
+                    root=str(val_path),
+                    num_classes=num_cls,
+                    image_size=img_size,
+                    transforms=False,
+                )
+                self._val_loader = DataLoader(
+                    val_ds, batch_size=batch_size, shuffle=False, num_workers=num_workers
+                )
+                logger.info("Auto-built validation SegmentationDataset from %s", val_path)
+
     def _build_optimizer(
         self,
         cfg: TrainingConfig,
@@ -1245,7 +1394,7 @@ class CoreModel:
 
         return model_config
 
-    def _load_from_config(self, path: str | Path) -> None:
+    def _load_from_config(self, path: str | Path) -> dict[str, Any]:
         """Build a model from a YAML configuration file.
 
         Loads the YAML file using
@@ -1257,6 +1406,9 @@ class CoreModel:
 
         Args:
             path: Path to a ``.yaml`` or ``.yml`` configuration file.
+
+        Returns:
+            The raw configuration dictionary.
 
         Raises:
             FileNotFoundError: If the path does not exist.
@@ -1271,6 +1423,7 @@ class CoreModel:
         task_config = load_config(str(path_obj))
         raw: dict[str, Any] = dataclasses.asdict(task_config)
         self._model = self._build_model_from_config(raw)
+        return raw
 
     @staticmethod
     def _filter_kwargs_for_signature(

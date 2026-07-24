@@ -81,35 +81,33 @@ class ClassificationDataset:
         root: str | Path,
         transform: Callable[..., object] | bool | None = None,
         transforms: Callable[..., object] | bool | None = None,
-        image_size: tuple[int, int] = (224, 224),
+        image_size: tuple[int, int] | None = None,
     ) -> None:
         """Initialise the dataset by scanning *root* for class folders.
 
         Args:
             root: Path to dataset root containing class subdirectories.
-            transform: Alias or primary argument for transform pipeline.
-                Pass ``True`` to enable standard default augmentations
-                (random flip, rotation, resize, ImageNet normalization).
-                Pass a callable pipeline to apply custom transforms.
-                If ``False`` or ``None``, applies safe baseline transforms
-                (resize to *image_size*, normalize to ``[0.0, 1.0]``,
-                and convert to ``[C, H, W]`` float32 Tensor).
+            transform: Transform pipeline or boolean flag. Pass ``True``
+                to enable standard default augmentations (random flip,
+                rotation, resize, ImageNet normalization).
             transforms: Alias for *transform*.
-            image_size: Target ``(height, width)`` tuple.
+            image_size: Target ``(height, width)`` tuple. Defaults to
+                ``(224, 224)`` when *transform* is ``True``.
 
         Raises:
             FileNotFoundError: If *root* does not exist.
         """
         self.root: Path = Path(root)
-        self.image_size: tuple[int, int] = image_size
+        self.image_size: tuple[int, int] | None = image_size
 
         tf: Callable[..., object] | bool | None = (
             transform if transform is not None else transforms
         )
         if tf is True:
+            target_size: tuple[int, int] = image_size or (224, 224)
             self.transform: Callable[..., object] | None = build_transforms(
                 ClassificationTransformConfig(
-                    image_size=image_size,
+                    image_size=target_size,
                     horizontal_flip_p=0.5,
                     rotate_limit=15,
                 )
@@ -149,18 +147,17 @@ class ClassificationDataset:
             image_np: np.ndarray = np.array(raw_img)
             result: object = self.transform(image=image_np)
             image_arr: np.ndarray = self._extract_image(result)
-            image_tensor: torch.Tensor = (
-                torch.from_numpy(image_arr).permute(2, 0, 1).float()
-            )
+            image_tensor: torch.Tensor = torch.from_numpy(image_arr).permute(2, 0, 1)
         else:
-            # Safe default fallback when transform=False / None:
-            # Resize to target image_size, normalize to [0.0, 1.0], convert to float32 Tensor
-            if raw_img.size != (self.image_size[1], self.image_size[0]):
+            if self.image_size is not None and raw_img.size != (
+                self.image_size[1],
+                self.image_size[0],
+            ):
                 raw_img = raw_img.resize(
                     (self.image_size[1], self.image_size[0]),
                     Image.Resampling.BILINEAR,
                 )
-            image_arr = np.array(raw_img, dtype=np.float32) / 255.0
+            image_arr = np.array(raw_img)
             image_tensor = torch.from_numpy(image_arr).permute(2, 0, 1)
 
         return image_tensor, label

@@ -675,15 +675,16 @@ class TestTrainValidationErrors:
             cm.train(epochs=1, batch_size=4)
 
     def test_missing_loss_fn(self) -> None:
-        """train() raises ValueError when no loss function is set."""
+        """train() auto-instantiates default loss function when not set."""
         model = _build_classification_model()
         cm = CoreModel(model, task="classification", device=torch.device("cpu"))
         loader = DataLoader(
             SyntheticClassificationDataset(num_samples=4), batch_size=4,
         )
         cm.set_train_dataloader(loader)
-        with pytest.raises(ValueError, match="Loss function is required"):
-            cm.train(epochs=1, batch_size=4)
+        history = cm.train(epochs=1, batch_size=4)
+        assert cm._loss_fn is not None
+        assert isinstance(history, dict)
 
     def test_invalid_config_type(self) -> None:
         """train() raises TypeError for invalid config type."""
@@ -1541,3 +1542,51 @@ class TestTrainingConfigValidation:
         cfg = TrainingConfig()
         with pytest.raises(dataclasses.FrozenInstanceError):
             cfg.epochs = 50  # type: ignore[misc]
+
+
+# ======================================================================
+# Test Auto-Build Training Pipeline (DataLoaders + Loss auto-instantiation)
+# ======================================================================
+
+
+class TestAutoBuildTrainingPipeline:
+    """Verify 1-step CoreModel instantiation and train() auto-building."""
+
+    def test_auto_build_classification_training(self, tmp_path: Path) -> None:
+        """CoreModel auto-builds dataset, dataloader, and loss for classification."""
+        cls_dir = tmp_path / "cls_auto"
+        (cls_dir / "cat").mkdir(parents=True)
+        (cls_dir / "dog").mkdir(parents=True)
+        arr1 = np.random.randint(0, 256, (32, 32, 3), dtype=np.uint8)
+        arr2 = np.random.randint(0, 256, (32, 32, 3), dtype=np.uint8)
+        Image.fromarray(arr1).save(str(cls_dir / "cat" / "img1.jpg"))
+        Image.fromarray(arr2).save(str(cls_dir / "dog" / "img2.jpg"))
+
+        model = CoreModel("resnet18", task="classification", num_classes=2)
+        history = model.train(data=str(cls_dir), epochs=1, batch_size=2)
+        assert "train" in history
+        assert len(history["train"]) == 1
+
+    def test_auto_build_dict_config_training(self, tmp_path: Path) -> None:
+        """CoreModel initialized with a dict config auto-runs train()."""
+        cls_dir = tmp_path / "cls_dict_auto"
+        (cls_dir / "cat").mkdir(parents=True)
+        (cls_dir / "dog").mkdir(parents=True)
+        arr1 = np.random.randint(0, 256, (32, 32, 3), dtype=np.uint8)
+        arr2 = np.random.randint(0, 256, (32, 32, 3), dtype=np.uint8)
+        Image.fromarray(arr1).save(str(cls_dir / "cat" / "img1.jpg"))
+        Image.fromarray(arr2).save(str(cls_dir / "dog" / "img2.jpg"))
+
+        config = {
+            "model_name": "resnet18",
+            "task": "classification",
+            "num_classes": 2,
+            "data": str(cls_dir),
+            "epochs": 1,
+            "batch_size": 2,
+        }
+        model = CoreModel(config)
+        history = model.train()
+        assert "train" in history
+        assert len(history["train"]) == 1
+
