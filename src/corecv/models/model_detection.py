@@ -264,11 +264,11 @@ if __name__ == "__main__":
     dummy_images = torch.randn(_batch_size, 3, _img_size, _img_size)
     preds_o2m, preds_o2o = model(dummy_images)
 
-    # Create dummy targets: [batch_idx, class_id, x1, y1, x2, y2]
+    # Create dummy targets: [batch_idx, class_id, x1, y1, x2, y2] in normalized [0, 1] range
     dummy_targets = torch.tensor(
         [
-            [0, 5, 100, 100, 200, 200],
-            [1, 10, 50, 50, 150, 150],
+            [0, 5, 0.1, 0.1, 0.3, 0.3],
+            [1, 10, 0.2, 0.2, 0.4, 0.4],
         ],
         dtype=torch.float32,
     )

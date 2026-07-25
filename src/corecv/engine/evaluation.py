@@ -670,6 +670,7 @@ class DetectionEvaluator:
         loss_fn: DualHeadDetectionLoss,
         num_classes: int,
         device: str | torch.device = "cuda",
+        conf_threshold: float = 0.25,
     ) -> None:
         """Initialize the detection evaluator.
 
@@ -682,6 +683,7 @@ class DetectionEvaluator:
                 ``(preds_o2m, preds_o2o, targets)``.
             num_classes: Number of foreground object classes.
             device: Target device string or :class:`torch.device`.
+            conf_threshold: Confidence threshold for metric computation.
 
         """
         self.model = model.to(device)
@@ -689,6 +691,7 @@ class DetectionEvaluator:
         self.loss_fn = loss_fn
         self.num_classes = num_classes
         self.device = torch.device(device)
+        self.conf_threshold = conf_threshold
 
     @staticmethod
     def _format_o2o_predictions(
@@ -735,7 +738,7 @@ class DetectionEvaluator:
 
         """
         self.model.eval()
-        metrics = DetectionMetrics(num_classes=self.num_classes)
+        metrics = DetectionMetrics(num_classes=self.num_classes, conf_threshold=self.conf_threshold)
         metrics.reset()
 
         total_loss = 0.0

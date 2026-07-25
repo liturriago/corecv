@@ -421,6 +421,7 @@ class DetectionTrainer:
         num_classes: int,
         device: str | torch.device = "cuda",
         scheduler: LRScheduler | None = None,
+        conf_threshold: float = 0.05,
     ) -> None:
         """Initialize the detection trainer.
 
@@ -437,6 +438,7 @@ class DetectionTrainer:
             num_classes: Number of foreground object classes.
             device: Target device string or :class:`torch.device`.
             scheduler: Optional LR scheduler stepped after each epoch.
+            conf_threshold: Confidence threshold for metric computation.
         """
         self.model = model.to(device)
         self.train_loader = train_loader
@@ -446,8 +448,9 @@ class DetectionTrainer:
         self.num_classes = num_classes
         self.device = torch.device(device)
         self.scheduler = scheduler
-        self._train_metrics = DetectionMetrics(num_classes=num_classes)
-        self._val_metrics = DetectionMetrics(num_classes=num_classes)
+        self.conf_threshold = conf_threshold
+        self._train_metrics = DetectionMetrics(num_classes=num_classes, conf_threshold=conf_threshold)
+        self._val_metrics = DetectionMetrics(num_classes=num_classes, conf_threshold=conf_threshold)
 
     @staticmethod
     def _format_o2o_predictions(

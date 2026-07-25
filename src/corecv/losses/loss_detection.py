@@ -383,10 +383,10 @@ class DualHeadDetectionLoss(nn.Module):
         device = pred_logits_o2m.device
 
         # Accumulator tensors connected to autograd graph
-        loss_cls_o2m_acc = torch.zeros(1, device=device)
-        loss_box_o2m_acc = torch.zeros(1, device=device)
-        loss_cls_o2o_acc = torch.zeros(1, device=device)
-        loss_box_o2o_acc = torch.zeros(1, device=device)
+        loss_cls_o2m_acc = pred_logits_o2m.sum() * 0.0
+        loss_box_o2m_acc = pred_boxes_o2m.sum() * 0.0
+        loss_cls_o2o_acc = pred_logits_o2o.sum() * 0.0
+        loss_box_o2o_acc = pred_boxes_o2o.sum() * 0.0
 
         per_image_targets = _split_targets_by_batch(targets, batch_size)
 

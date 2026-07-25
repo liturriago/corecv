@@ -182,11 +182,11 @@ class AnchorFreeDetectionHead(nn.Module):
 
             # O2M branch predictions
             o2m_cls = self.o2m_cls_heads[level_idx](shared)
-            o2m_reg = self.o2m_reg_heads[level_idx](shared)
+            o2m_reg = self.o2m_reg_heads[level_idx](shared).sigmoid()
 
             # O2O branch predictions
             o2o_cls = self.o2o_cls_heads[level_idx](shared)
-            o2o_reg = self.o2o_reg_heads[level_idx](shared)
+            o2o_reg = self.o2o_reg_heads[level_idx](shared).sigmoid()
 
             # Reshape: (B, C, H, W) -> (B, H*W, C)
             o2m_logits_parts.append(o2m_cls.flatten(start_dim=2).permute(0, 2, 1))
