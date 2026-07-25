@@ -1,277 +1,188 @@
-"""Path Aggregation Network (PANet) neck implementation.
+"""Path Aggregation Network (PANet) neck for CoreCV.
 
-Implements the PANet architecture from "Path Aggregation Network for
-Instance Segmentation" (Liu et al., 2018).  PANet extends FPN by adding
-a **bottom-up path augmentation** on top of the FPN's top-down pyramid,
-providing a shorter information path from low-level features to the
-deepest layers and improving feature fusion across all scales.
+Extends FPN with an additional bottom-up path augmentation for enhanced
+feature aggregation across scales. Consumes multi-scale features from
+backbones and produces enriched feature maps.
 
-Architecture
-------------
-
-Given backbone feature levels ``[C2, C3, C4, C5]`` at strides
-``[4, 8, 16, 32]``:
-
-1. **FPN top-down pathway** (identical to :class:`~corecv.models.necks.fpn.FPN`)
-   produces ``[P2, P3, P4, P5]``.
-2. **Bottom-up path augmentation** merges FPN outputs from shallowest to
-   deepest via stride-2 convolutions for spatial downsampling and
-   element-wise addition, producing ``[N2, N3, N4, N5]``.
-3. **Output 3x3 convolutions** are applied after each bottom-up merge.
-
-The result is ``[N2, N3, N4, N5]`` -- one feature map per backbone level,
-all with ``out_channels`` channels.
-
-Dynamic Channel Projection
---------------------------
-
-Like :class:`~corecv.models.necks.fpn.FPN`, the PANet accepts any
-:class:`~corecv.core.contract.FeatureInfo` and dynamically instantiates
-all 1x1 and 3x3 convolutions based on backbone metadata.
-
-Example:
-    >>> from corecv.models.backbones.resnet import ResNet50Backbone
-    >>> from corecv.models.necks.panet import PANet
-    >>> backbone = ResNet50Backbone(pretrained=False)
-    >>> neck = PANet(feature_info=backbone.feature_info, out_channels=256)
-    >>> features = backbone(torch.randn(1, 3, 224, 224))
-    >>> pyramid = neck(features)
-    >>> tuple(f.shape for f in pyramid)
-    (torch.Size([1, 256, 56, 56]), torch.Size([1, 256, 28, 28]),
-     torch.Size([1, 256, 14, 14]), torch.Size([1, 256, 7, 7]))
+Reference:
+    Liu et al., "Path Aggregation Network for Instance Segmentation", CVPR 2018.
 """
 
 from __future__ import annotations
 
-from collections import OrderedDict
-from collections.abc import Sequence
-
 import torch
-import torch.nn.functional as F
-from torch import nn
-
-from corecv.core.contract import FeatureInfo
-from corecv.core.registry import register_neck
+from torch import Tensor, nn
 
 
-def _sorted_levels(
-    feature_info: FeatureInfo,
-) -> list[tuple[str, int, int]]:
-    """Sort feature levels by stride in ascending order.
-
-    Args:
-        feature_info: Backbone feature metadata.
-
-    Returns:
-        A list of ``(level_name, stride, in_channels)`` tuples sorted
-        from smallest to largest stride.
-    """
-    pairs = [
-        (name, feature_info.strides[name], feature_info.channels[name])
-        for name in feature_info.channels
-    ]
-    return sorted(pairs, key=lambda x: x[1])
-
-
-@register_neck("panet")
 class PANet(nn.Module):
-    """Path Aggregation Network neck with dynamic channel projection.
+    """Path Aggregation Network with bidirectional feature fusion.
 
-    Combines a top-down FPN pathway with a bottom-up path augmentation,
-    yielding richer multi-scale features for detection and segmentation
-    heads.
+    Augments the standard FPN top-down pathway with an additional bottom-up
+    path that propagates fine-grained spatial information from lower levels
+    to higher levels. Each output level is processed by a 3x3 convolution.
 
-    Attributes:
-        out_channels: Uniform channel count for all output feature levels.
-        levels: Sorted list of ``(level_name, stride, in_channels)`` tuples.
-        lateral_convs: 1x1 convolutions for FPN top-down lateral connections.
-        fpn_convs: 3x3 convolutions after FPN top-down merges.
-        panet_reduce_convs: 3x3 stride-2 convolutions for bottom-up spatial
-            downsampling between adjacent PANet levels.
-        panet_lateral_convs: 1x1 convolutions that project FPN outputs into
-            the PANet bottom-up pathway.
-        panet_convs: 3x3 convolutions applied after each bottom-up addition.
+    Architecture::
+
+        Input:  C1 -----> C2 -----> C3 -----> C4
+                  |         |         |         |
+                  v         v         v         v
+                1x1       1x1       1x1       1x1    (lateral convs)
+                  |         |         |         |
+                  +<--------+<--------+         |    (top-down: upsample + add)
+                  |         |         |         |
+                  v         v         v         v
+                3x3       3x3       3x3       3x3    (output convs)
+                  |         |         |         |
+                  +-------->+-------->+-------->+    (bottom-down: downsample + add)
+                  |         |         |         |
+                  v         v         v         v
+                3x3       3x3       3x3       3x3    (final convs)
+                  |         |         |         |
+                P1        P2        P3        P4
+
+    Example:
+        >>> import torch
+        >>> from corecv.models.necks.panet import PANet
+        >>> neck = PANet(in_channels=[64, 128, 256, 512], out_channels=256)
+        >>> feats = [torch.randn(2, c, h, w) for c, h, w in
+        ...          [(64, 64, 64), (128, 32, 32), (256, 16, 16), (512, 8, 8)]]
+        >>> outputs = neck(feats)
+        >>> [o.shape for o in outputs]
+        [torch.Size([2, 256, 64, 64]), torch.Size([2, 256, 32, 32]),
+         torch.Size([2, 256, 16, 16]), torch.Size([2, 256, 8, 8])]
     """
 
     def __init__(
         self,
-        feature_info: FeatureInfo,
+        in_channels: list[int],
         out_channels: int = 256,
     ) -> None:
-        """Initialise the PANet neck.
+        """Initialize the Path Aggregation Network.
 
         Args:
-            feature_info: Metadata describing the backbone's feature levels.
-                Used to determine the number of levels and their input
-                channel counts for all convolution construction.
-            out_channels: Output channel dimension for every pyramid level.
-                All lateral and projection convolutions target this width.
+            in_channels: Channel dimensions of each input feature level,
+                ordered from finest (highest resolution) to coarsest.
+            out_channels: Number of channels in each output feature map.
         """
         super().__init__()
+        self.in_channels = in_channels
         self.out_channels = out_channels
-        self.levels = _sorted_levels(feature_info)
-        num_levels = len(self.levels)
+        num_levels = len(in_channels)
 
-        # -----------------------------------------------------------------
-        # FPN top-down pathway (same as FPN class)
-        # -----------------------------------------------------------------
-        lateral_convs: list[tuple[str, nn.Module]] = []
-        fpn_convs: list[tuple[str, nn.Module]] = []
+        # Lateral 1x1 convolutions: project backbone features to out_channels
+        self.lateral_convs = nn.ModuleList(
+            [nn.Conv2d(in_ch, out_channels, kernel_size=1) for in_ch in in_channels],
+        )
 
-        for name, _stride, in_ch in self.levels:
-            lateral_convs.append(
-                (
-                    name,
-                    nn.Conv2d(in_ch, out_channels, kernel_size=1),
-                )
-            )
-            fpn_convs.append(
-                (
-                    name,
-                    nn.Conv2d(
-                        out_channels,
-                        out_channels,
-                        kernel_size=3,
-                        padding=1,
-                    ),
-                )
-            )
+        # Top-down output 3x3 convolutions (after top-down fusion)
+        self.topdown_convs = nn.ModuleList(
+            [
+                nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1)
+                for _ in range(num_levels)
+            ],
+        )
 
-        self.lateral_convs = nn.ModuleDict(OrderedDict(lateral_convs))
-        self.fpn_convs = nn.ModuleDict(OrderedDict(fpn_convs))
+        # Bottom-up 3x3 convolutions (after bottom-up fusion)
+        self.bottomup_convs = nn.ModuleList(
+            [
+                nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1)
+                for _ in range(num_levels)
+            ],
+        )
 
-        # -----------------------------------------------------------------
-        # Bottom-up path augmentation
-        # -----------------------------------------------------------------
+        self._init_weights()
 
-        # 1x1 lateral convolutions: project FPN outputs into PANet pathway
-        panet_lateral_convs: list[tuple[str, nn.Module]] = []
+    def _init_weights(self) -> None:
+        """Initialize convolution weights with Kaiming uniform initialization."""
+        for module in self.modules():
+            if isinstance(module, nn.Conv2d):
+                nn.init.kaiming_uniform_(module.weight, nonlinearity="linear")
+                if module.bias is not None:
+                    nn.init.zeros_(module.bias)
 
-        # 3x3 stride-2 convolutions: downsample from level i to level i+1
-        panet_reduce_convs: list[tuple[str, nn.Module]] = []
-
-        # 3x3 output convolutions: applied after each bottom-up addition
-        panet_convs: list[tuple[str, nn.Module]] = []
-
-        for _i, (name, _stride, _in_ch) in enumerate(self.levels):
-            panet_lateral_convs.append(
-                (
-                    name,
-                    nn.Conv2d(out_channels, out_channels, kernel_size=1),
-                )
-            )
-            panet_convs.append(
-                (
-                    name,
-                    nn.Conv2d(
-                        out_channels,
-                        out_channels,
-                        kernel_size=3,
-                        padding=1,
-                    ),
-                )
-            )
-
-        # Stride-2 conv from level i -> level i+1 exists for all but the
-        # deepest level (deepest level is the starting point of the
-        # bottom-up path and requires no downsampling).
-        for i in range(num_levels - 1):
-            src_name = self.levels[i][0]
-            panet_reduce_convs.append(
-                (
-                    f"{src_name}_reduce",
-                    nn.Conv2d(
-                        out_channels,
-                        out_channels,
-                        kernel_size=3,
-                        stride=2,
-                        padding=1,
-                    ),
-                )
-            )
-
-        self.panet_lateral_convs = nn.ModuleDict(OrderedDict(panet_lateral_convs))
-        self.panet_reduce_convs = nn.ModuleDict(OrderedDict(panet_reduce_convs))
-        self.panet_convs = nn.ModuleDict(OrderedDict(panet_convs))
-
-    # ------------------------------------------------------------------
-    # Forward
-    # ------------------------------------------------------------------
-
-    def forward(self, features: Sequence[torch.Tensor]) -> list[torch.Tensor]:
-        """Apply FPN top-down then PANet bottom-up pathways.
+    def forward(self, features: list[Tensor]) -> list[Tensor]:
+        """Run bidirectional feature aggregation on multi-scale features.
 
         Args:
-            features: Sequence of backbone feature tensors **in stride-
-                ascending order** (highest resolution first).  The length
-                must match the number of levels in the
-                :class:`FeatureInfo` provided at construction time.
+            features: List of multi-scale feature tensors ordered from finest
+                (highest spatial resolution) to coarsest, each with shape
+                ``(B, C_i, H_i, W_i)``.
 
         Returns:
-            A list of feature tensors in stride-ascending order (smallest
-            stride first), each with shape
-            ``(B, out_channels, H_i, W_i)``.
-
-        Raises:
-            ValueError: If the number of input features does not match
-                the number of registered backbone levels.
+            List of feature tensors with unified channel dimension
+            ``(B, out_channels, H_i, W_i)``, same order as input.
         """
-        if len(features) != len(self.levels):
-            msg = (
-                f"Expected {len(self.levels)} feature maps "
-                f"(one per backbone level), received {len(features)}."
+        num_levels = len(features)
+
+        # Step 1: Apply lateral 1x1 convolutions
+        laterals = [conv(feat) for conv, feat in zip(self.lateral_convs, features, strict=True)]
+
+        # Step 2: Top-down pathway (coarse -> fine)
+        for idx in range(num_levels - 1, 0, -1):
+            upsampled = nn.functional.interpolate(
+                laterals[idx],
+                size=laterals[idx - 1].shape[2:],
+                mode="bilinear",
+                align_corners=False,
             )
-            raise ValueError(msg)
+            laterals[idx - 1] = laterals[idx - 1] + upsampled
 
-        num_levels = len(self.levels)
+        # Step 3: Apply top-down output 3x3 convolutions
+        topdown_outs = [conv(lat) for conv, lat in zip(self.topdown_convs, laterals, strict=True)]
 
-        # -----------------------------------------------------------------
-        # Stage 1 -- FPN top-down pathway
-        # -----------------------------------------------------------------
-
-        # Lateral projections to uniform channel dimension
-        laterals: list[torch.Tensor] = []
-        for i, (name, _stride, _in_ch) in enumerate(self.levels):
-            laterals.append(self.lateral_convs[name](features[i]))
-
-        # Top-down merge: deepest -> shallowest
-        for i in range(num_levels - 1, 0, -1):
-            target_h = laterals[i - 1].shape[-2]
-            target_w = laterals[i - 1].shape[-1]
-            upsampled = F.interpolate(
-                laterals[i],
-                size=(target_h, target_w),
-                mode="nearest",
+        # Step 4: Bottom-up pathway (fine -> coarse)
+        bottomup = [topdown_outs[0]]
+        for idx in range(1, num_levels):
+            # Downsample the finer level to match the spatial size of the coarser level
+            downsampled = nn.functional.max_pool2d(
+                bottomup[idx - 1],
+                kernel_size=2,
+                stride=2,
             )
-            laterals[i - 1] = laterals[i - 1] + upsampled
+            # Ensure spatial alignment (handles odd-sized feature maps)
+            if downsampled.shape[2:] != topdown_outs[idx].shape[2:]:
+                downsampled = nn.functional.interpolate(
+                    downsampled,
+                    size=topdown_outs[idx].shape[2:],
+                    mode="bilinear",
+                    align_corners=False,
+                )
+            merged = topdown_outs[idx] + downsampled
+            bottomup.append(merged)
 
-        # FPN output convolutions
-        fpn_out: list[torch.Tensor] = []
-        for i, (name, _stride, _in_ch) in enumerate(self.levels):
-            fpn_out.append(self.fpn_convs[name](laterals[i]))
+        # Step 5: Apply bottom-up output 3x3 convolutions
+        return [conv(feat) for conv, feat in zip(self.bottomup_convs, bottomup, strict=True)]
 
-        # -----------------------------------------------------------------
-        # Stage 2 -- Bottom-up path augmentation
-        # -----------------------------------------------------------------
 
-        # Project each FPN output into the PANet pathway
-        panet_features: list[torch.Tensor] = []
-        for i, (name, _stride, _in_ch) in enumerate(self.levels):
-            panet_features.append(self.panet_lateral_convs[name](fpn_out[i]))
+if __name__ == "__main__":
+    torch.manual_seed(42)
 
-        # Bottom-up merge: shallowest -> deepest
-        # The deepest level (index num_levels - 1) is the starting point
-        # and only needs its lateral projection (already done above).
-        for i in range(1, num_levels):
-            src_name = self.levels[i - 1][0]
-            downsampled = self.panet_reduce_convs[f"{src_name}_reduce"](
-                panet_features[i - 1],
-            )
-            panet_features[i] = panet_features[i] + downsampled
+    # Simulate ResNet-style backbone features: C2=64, C3=128, C4=256, C5=512
+    batch_size = 2
+    in_channels_list = [64, 128, 256, 512]
+    out_channels = 256
+    spatial_sizes = [(64, 64), (32, 32), (16, 16), (8, 8)]
 
-        # PANet output convolutions
-        outputs: list[torch.Tensor] = []
-        for i, (name, _stride, _in_ch) in enumerate(self.levels):
-            outputs.append(self.panet_convs[name](panet_features[i]))
+    dummy_features = [
+        torch.randn(batch_size, c, h, w)
+        for c, (h, w) in zip(in_channels_list, spatial_sizes, strict=True)
+    ]
 
-        return outputs
+    panet = PANet(in_channels=in_channels_list, out_channels=out_channels)
+    panet.eval()
+
+    with torch.no_grad():
+        outputs = panet(dummy_features)
+
+    print("--- PANet Forward Pass ---")  # noqa: T201
+    for i, (inp, out) in enumerate(zip(dummy_features, outputs, strict=True)):
+        print(  # noqa: T201
+            f"  Level {i}: input {inp.shape} -> output {out.shape}",
+        )
+
+    # Verify output channels
+    assert all(o.shape[1] == out_channels for o in outputs), "Channel mismatch!"  # noqa: S101
+    # Verify spatial sizes are preserved
+    for inp, out in zip(dummy_features, outputs, strict=True):
+        assert inp.shape[2:] == out.shape[2:], "Spatial size mismatch!"  # noqa: S101
+    print("All assertions passed.")  # noqa: T201

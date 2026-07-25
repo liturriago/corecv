@@ -1,62 +1,60 @@
-"""Models module for CoreCV.
+"""CoreCV Models Module.
 
-Provides backbone, neck, and head implementations for vision tasks.
-All backbones conform to the :class:`~corecv.core.contract.BaseBackbone`
-interface and expose :class:`~corecv.core.contract.FeatureInfo` metadata.
+This package provides SOTA computer vision models for classification,
+detection, and segmentation tasks. It includes:
+
+- **Backbones**: TorchVision-based feature extractors (ResNet, MobileNetV3,
+  ConvNeXt, Swin Transformer) with FeatureInfo metadata.
+- **Necks**: Feature pyramid networks (FPN, PANet, BiFPN) for multi-scale
+  feature fusion.
+- **Heads**: Task-specific heads for classification, detection (anchor-free),
+  and segmentation (DeepLabV3+, ResUNetDecoder).
+- **Model factories**: High-level model builders for each task.
 """
 
+from __future__ import annotations
+
 from corecv.models.backbones import (
-    ConvNeXtBaseBackbone,
-    ConvNeXtLargeBackbone,
-    ConvNeXtSmallBackbone,
-    ConvNeXtTinyBackbone,
-    MobileNetV3LargeBackbone,
-    MobileNetV3SmallBackbone,
-    ResNet18Backbone,
-    ResNet34Backbone,
-    ResNet50Backbone,
-    ResNet101Backbone,
-    ViTBaseBackbone,
-    ViTSmallBackbone,
-    ViTTinyBackbone,
+    BackboneName,
+    BaseBackbone,
+    ConvNeXtBackbone,
+    FeatureInfo,
+    MobileNetV3Backbone,
+    ResNetBackbone,
+    SwinTransformerBackbone,
+    create_backbone,
 )
-from corecv.models.detector import CoreObjectDetector
 from corecv.models.heads import (
-    ASPPDecoder,
-    DecoupledAnchorFreeHead,
-    LinearClassificationHead,
-    QueryDetectionHead,
+    AnchorFreeDetectionHead,
+    ClassificationHead,
+    DeepLabV3PlusHead,
     ResUNetDecoder,
 )
-from corecv.models.necks import FPN, PANet
+from corecv.models.model_classification import ClassificationModel, create_classification_model
+from corecv.models.model_detection import DetectionModel, create_detection_model
+from corecv.models.model_segmentation import SegmentationModel, create_segmentation_model
+from corecv.models.necks import FPN, BiFPN, PANet
 
 __all__ = [
-    # MobileNetV3
-    "MobileNetV3SmallBackbone",
-    "MobileNetV3LargeBackbone",
-    # ResNet
-    "ResNet18Backbone",
-    "ResNet34Backbone",
-    "ResNet50Backbone",
-    "ResNet101Backbone",
-    # ConvNeXt
-    "ConvNeXtTinyBackbone",
-    "ConvNeXtSmallBackbone",
-    "ConvNeXtBaseBackbone",
-    "ConvNeXtLargeBackbone",
-    # ViT
-    "ViTTinyBackbone",
-    "ViTSmallBackbone",
-    "ViTBaseBackbone",
-    # Heads
-    "LinearClassificationHead",
-    "ResUNetDecoder",
-    "ASPPDecoder",
-    "DecoupledAnchorFreeHead",
-    "QueryDetectionHead",
-    # Necks
     "FPN",
+    "AnchorFreeDetectionHead",
+    "BackboneName",
+    "BaseBackbone",
+    "BiFPN",
+    "ClassificationHead",
+    "ClassificationModel",
+    "ConvNeXtBackbone",
+    "DeepLabV3PlusHead",
+    "DetectionModel",
+    "FeatureInfo",
+    "MobileNetV3Backbone",
     "PANet",
-    # Detector
-    "CoreObjectDetector",
+    "ResNetBackbone",
+    "ResUNetDecoder",
+    "SegmentationModel",
+    "SwinTransformerBackbone",
+    "create_backbone",
+    "create_classification_model",
+    "create_detection_model",
+    "create_segmentation_model",
 ]

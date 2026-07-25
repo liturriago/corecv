@@ -1,222 +1,174 @@
-"""ResNet backbone with multi-scale feature extraction.
+"""ResNet backbone for CoreCV.
 
-Wraps :mod:`torchvision.models` ResNet variants (18, 34, 50, 101) and
-extracts intermediate feature maps from ``layer1`` through ``layer4`` at
-strides 4, 8, 16, and 32 respectively.
+Provides ResNet variants (18, 34, 50, 101, 152) as feature extractors
+with ``FeatureInfo`` metadata for multi-scale feature consumption.
 
-Extracted feature levels (verified against torchvision output shapes):
-
-.. list-table::
-   :header-rows: 1
-   :widths: 20 20 20 15 15 15 15
-
-   * - Model
-     - Level
-     - Stride
-     - ResNet-18
-     - ResNet-34
-     - ResNet-50
-     - ResNet-101
-   * - layer1
-     - stride4
-     - 4
-     - 64
-     - 64
-     - 256
-     - 256
-   * - layer2
-     - stride8
-     - 8
-     - 128
-     - 128
-     - 512
-     - 512
-   * - layer3
-     - stride16
-     - 16
-     - 256
-     - 256
-     - 1024
-     - 1024
-   * - layer4
-     - stride32
-     - 32
-     - 512
-     - 512
-     - 2048
-     - 2048
-
-Example:
-    >>> from corecv.models.backbones.resnet import ResNet50Backbone
-    >>> backbone = ResNet50Backbone(pretrained=False)
-    >>> backbone.feature_info.channels
-    {'stride4': 256, 'stride8': 512, 'stride16': 1024, 'stride32': 2048}
+Each variant exposes multi-scale features from four residual stages
+(C2-C5) with strides 4, 8, 16, 32 relative to the input image.
 """
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Literal
 
 import torch
+from torch import Tensor, nn
 from torchvision.models import (
     ResNet18_Weights,
     ResNet34_Weights,
     ResNet50_Weights,
     ResNet101_Weights,
+    ResNet152_Weights,
     resnet18,
     resnet34,
     resnet50,
     resnet101,
+    resnet152,
 )
 
-from corecv.core.contract import BaseBackbone, FeatureInfo
-from corecv.core.registry import register_backbone
+from corecv.models.backbones.base import BaseBackbone, FeatureInfo
 
-# ---------------------------------------------------------------------------
-# Channel configuration per ResNet variant
-# ---------------------------------------------------------------------------
+# Type alias for supported ResNet variants.
+ResNetVariant = Literal["resnet18", "resnet34", "resnet50", "resnet101", "resnet152"]
 
-_RESNET_VARIANTS: dict[str, dict[str, Any]] = {
-    "resnet18": {
-        "factory": resnet18,
-        "weights": ResNet18_Weights,
-        "channels": {"stride4": 64, "stride8": 128, "stride16": 256, "stride32": 512},
-    },
-    "resnet34": {
-        "factory": resnet34,
-        "weights": ResNet34_Weights,
-        "channels": {"stride4": 64, "stride8": 128, "stride16": 256, "stride32": 512},
-    },
-    "resnet50": {
-        "factory": resnet50,
-        "weights": ResNet50_Weights,
-        "channels": {"stride4": 256, "stride8": 512, "stride16": 1024, "stride32": 2048},
-    },
-    "resnet101": {
-        "factory": resnet101,
-        "weights": ResNet101_Weights,
-        "channels": {"stride4": 256, "stride8": 512, "stride16": 1024, "stride32": 2048},
-    },
+# Maps variant name -> (constructor, default weights factory).
+_RESNET_REGISTRY: dict[str, tuple[type, type]] = {
+    "resnet18": (resnet18, ResNet18_Weights),
+    "resnet34": (resnet34, ResNet34_Weights),
+    "resnet50": (resnet50, ResNet50_Weights),
+    "resnet101": (resnet101, ResNet101_Weights),
+    "resnet152": (resnet152, ResNet152_Weights),
 }
 
 
-class _ResNetBackbone(BaseBackbone):
-    """Shared base for all ResNet backbone variants.
+class ResNetBackbone(BaseBackbone):
+    """ResNet multi-scale feature extractor.
 
-    Runs the stem (conv1 -> bn1 -> relu -> maxpool) and then captures the
-    outputs of ``layer1`` through ``layer4``.
+    Wraps a TorchVision ``ResNet`` model and exposes four feature levels
+    (C2-C5) extracted after each residual stage group.
 
-    This class should not be instantiated directly; use the variant-specific
-    subclasses (:class:`ResNet18Backbone`, etc.).
+    Example:
+        >>> import torch
+        >>> from corecv.models.backbones.resnet import ResNetBackbone
+        >>> backbone = ResNetBackbone("resnet50", pretrained=False)
+        >>> x = torch.randn(2, 3, 224, 224)
+        >>> features, info = backbone(x)
+        >>> [f.shape for f in features]
+        [torch.Size([2, 256, 56, 56]), torch.Size([2, 512, 28, 28]),
+         torch.Size([2, 1024, 14, 14]), torch.Size([2, 2048, 7, 7])]
     """
 
-    _variant_key: str
-
-    def __init__(self, pretrained: bool = True, **kwargs: object) -> None:
-        """Initialise the ResNet backbone.
+    def __init__(
+        self,
+        variant: ResNetVariant = "resnet50",
+        *,
+        pretrained: bool = False,
+    ) -> None:
+        """Initialize the ResNet backbone.
 
         Args:
+            variant: ResNet variant name. One of ``resnet18``, ``resnet34``,
+                ``resnet50``, ``resnet101``, ``resnet152``.
             pretrained: If ``True``, load ImageNet-1K pretrained weights.
-            **kwargs: Additional keyword arguments forwarded to the
-                underlying ResNet factory function.
         """
-        super().__init__()
-        cfg = _RESNET_VARIANTS[self._variant_key]
-        weights = cfg["weights"].IMAGENET1K_V1 if pretrained else None
-        self._model = cfg["factory"](weights=weights, **kwargs)
+        if variant not in _RESNET_REGISTRY:
+            msg = f"Unknown ResNet variant: {variant!r}. Choose from {list(_RESNET_REGISTRY)}"
+            raise ValueError(msg)
 
-    @property
-    def feature_info(self) -> FeatureInfo:
-        """Return channel and stride metadata for all extracted feature levels.
+        constructor, weights_cls = _RESNET_REGISTRY[variant]
+        weights = weights_cls.DEFAULT if pretrained else None
+        model = constructor(weights=weights)
 
-        Returns:
-            A :class:`FeatureInfo` with keys ``stride4``, ``stride8``,
-            ``stride16``, and ``stride32``.
-        """
-        cfg = _RESNET_VARIANTS[self._variant_key]
-        return FeatureInfo(
-            channels=dict(cfg["channels"]),
-            strides={
-                "stride4": 4,
-                "stride8": 8,
-                "stride16": 16,
-                "stride32": 32,
-            },
+        # Determine channel dimensions for each stage via dummy forward.
+        ch = self._infer_channels(model)
+
+        feature_info = FeatureInfo(
+            channels=ch,
+            strides=[4, 8, 16, 32],
+            names=["C2", "C3", "C4", "C5"],
         )
+        super().__init__(feature_info=feature_info)
 
-    def forward(self, x: torch.Tensor) -> list[torch.Tensor]:
-        """Extract multi-scale features from the ResNet backbone.
+        # Extract building blocks from the TorchVision ResNet.
+        self.conv1: nn.Conv2d = model.conv1
+        self.bn1: nn.BatchNorm2d = model.bn1
+        self.relu: nn.ReLU = model.relu
+        self.maxpool: nn.MaxPool2d = model.maxpool
+        self.layer1: nn.Module = model.layer1  # stride 4
+        self.layer2: nn.Module = model.layer2  # stride 8
+        self.layer3: nn.Module = model.layer3  # stride 16
+        self.layer4: nn.Module = model.layer4  # stride 32
 
-        Runs the stem (conv1 -> bn1 -> relu -> maxpool) followed by the
-        four residual layers.
+    @staticmethod
+    def _infer_channels(model: nn.Module) -> list[int]:
+        """Infer output channel counts from a ResNet model.
 
         Args:
-            x: Input tensor of shape ``(B, 3, H, W)``.
+            model: A TorchVision ResNet model instance.
 
         Returns:
-            A list of four feature tensors from layer1 through layer4 at
-            strides 4, 8, 16, and 32 respectively.
+            List of four channel counts for layers 1-4.
         """
-        m = self._model
-        x = m.maxpool(m.relu(m.bn1(m.conv1(x))))
-        c1 = m.layer1(x)
-        c2 = m.layer2(c1)
-        c3 = m.layer3(c2)
-        c4 = m.layer4(c3)
-        return [c1, c2, c3, c4]
+        dummy = torch.randn(1, 3, 224, 224)
+        x = model.conv1(dummy)
+        x = model.bn1(x)
+        x = model.relu(x)
+        x = model.maxpool(x)
+
+        channels: list[int] = []
+        for layer in [model.layer1, model.layer2, model.layer3, model.layer4]:
+            x = layer(x)
+            channels.append(x.shape[1])
+        return channels
+
+    def forward(self, x: Tensor) -> tuple[list[Tensor], FeatureInfo]:
+        """Extract multi-scale features from the input tensor.
+
+        Args:
+            x: Input image tensor of shape ``(B, 3, H, W)``.
+
+        Returns:
+            Tuple of ``(features, feature_info)`` where *features* is a list
+            of four feature tensors with strides 4x, 8x, 16x, 32x relative
+            to the input, and *feature_info* contains channel/stride metadata.
+        """
+        x = self.conv1(x)
+        x = self.bn1(x)
+        x = self.relu(x)
+        x = self.maxpool(x)
+
+        c2 = self.layer1(x)
+        c3 = self.layer2(c2)
+        c4 = self.layer3(c3)
+        c5 = self.layer4(c4)
+
+        return [c2, c3, c4, c5], self.feature_info
 
 
-@register_backbone("resnet18")
-class ResNet18Backbone(_ResNetBackbone):
-    """ResNet-18 backbone.
+# ---------------------------------------------------------------------------
+# Sanity check
+# ---------------------------------------------------------------------------
 
-    Feature levels:
-        - ``stride4``: 64 channels
-        - ``stride8``: 128 channels
-        - ``stride16``: 256 channels
-        - ``stride32``: 512 channels
-    """
+if __name__ == "__main__":
+    torch.manual_seed(42)
 
-    _variant_key = "resnet18"
+    for variant in ("resnet18", "resnet34", "resnet50", "resnet101", "resnet152"):
+        backbone = ResNetBackbone(variant=variant, pretrained=False)
+        backbone.eval()
 
+        dummy_input = torch.randn(1, 3, 224, 224)
+        with torch.no_grad():
+            features, info = backbone(dummy_input)
 
-@register_backbone("resnet34")
-class ResNet34Backbone(_ResNetBackbone):
-    """ResNet-34 backbone.
+        print(f"--- {variant} ---")  # noqa: T201
+        for i, (feat, ch, stride) in enumerate(
+            zip(features, info.channels, info.strides, strict=True),
+        ):
+            print(  # noqa: T201
+                f"  Level {i} ({info.names[i]}): "
+                f"channels={ch}, stride={stride}, "
+                f"shape={feat.shape}",
+            )
 
-    Feature levels:
-        - ``stride4``: 64 channels
-        - ``stride8``: 128 channels
-        - ``stride16``: 256 channels
-        - ``stride32``: 512 channels
-    """
-
-    _variant_key = "resnet34"
-
-
-@register_backbone("resnet50")
-class ResNet50Backbone(_ResNetBackbone):
-    """ResNet-50 backbone.
-
-    Feature levels:
-        - ``stride4``: 256 channels
-        - ``stride8``: 512 channels
-        - ``stride16``: 1024 channels
-        - ``stride32``: 2048 channels
-    """
-
-    _variant_key = "resnet50"
-
-
-@register_backbone("resnet101")
-class ResNet101Backbone(_ResNetBackbone):
-    """ResNet-101 backbone.
-
-    Feature levels:
-        - ``stride4``: 256 channels
-        - ``stride8``: 512 channels
-        - ``stride16``: 1024 channels
-        - ``stride32``: 2048 channels
-    """
-
-    _variant_key = "resnet101"
+        assert [f.shape[1] for f in features] == info.channels, "Channel mismatch!"  # noqa: S101
+    print("\nAll ResNet backbone tests passed.")  # noqa: T201

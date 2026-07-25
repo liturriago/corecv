@@ -1,122 +1,100 @@
-"""Backbone modules for CoreCV.
+"""Backbones subpackage for CoreCV.
 
-Provides :class:`~corecv.core.contract.BaseBackbone` implementations for
-MobileNetV3, ResNet, ConvNeXt, and Vision Transformer architectures.  All
-backbones expose :class:`~corecv.core.contract.FeatureInfo` metadata and
-are registered in :data:`~corecv.core.registry.BACKBONE_REGISTRY`.
+This subpackage contains TorchVision-based backbone encoders that extend
+``BaseBackbone`` and expose ``FeatureInfo`` metadata for downstream heads
+and necks. Supported architectures:
 
-Backbone catalogue
-------------------
-
-.. list-table::
-   :header-rows: 1
-   :widths: 25 20 20 15
-
-   * - Class
-     - Registry Key
-     - Feature Levels
-     - Strides
-   * - :class:`MobileNetV3SmallBackbone`
-     - ``mobilenet_v3_small``
-     - 4
-     - 4, 8, 16, 32
-   * - :class:`MobileNetV3LargeBackbone`
-     - ``mobilenet_v3_large``
-     - 4
-     - 4, 8, 16, 32
-   * - :class:`ResNet18Backbone`
-     - ``resnet18``
-     - 4
-     - 4, 8, 16, 32
-   * - :class:`ResNet34Backbone`
-     - ``resnet34``
-     - 4
-     - 4, 8, 16, 32
-   * - :class:`ResNet50Backbone`
-     - ``resnet50``
-     - 4
-     - 4, 8, 16, 32
-   * - :class:`ResNet101Backbone`
-     - ``resnet101``
-     - 4
-     - 4, 8, 16, 32
-   * - :class:`ConvNeXtTinyBackbone`
-     - ``convnext_tiny``
-     - 4
-     - 4, 8, 16, 32
-   * - :class:`ConvNeXtSmallBackbone`
-     - ``convnext_small``
-     - 4
-     - 4, 8, 16, 32
-   * - :class:`ConvNeXtBaseBackbone`
-     - ``convnext_base``
-     - 4
-     - 4, 8, 16, 32
-   * - :class:`ConvNeXtLargeBackbone`
-     - ``convnext_large``
-     - 4
-     - 4, 8, 16, 32
-   * - :class:`ViTTinyBackbone`
-     - ``vit_tiny``
-     - 3
-     - 8, 16, 32
-   * - :class:`ViTSmallBackbone`
-     - ``vit_small``
-     - 3
-     - 8, 16, 32
-   * - :class:`ViTBaseBackbone`
-     - ``vit_base``
-     - 3
-     - 8, 16, 32
-
-Example:
-    >>> from corecv.models.backbones import ResNet50Backbone
-    >>> backbone = ResNet50Backbone(pretrained=True)
-    >>> list(backbone.feature_info.channels.values())
-    [256, 512, 1024, 2048]
+- **ResNet**: ResNet-18/34/50/101/152 variants.
+- **MobileNetV3**: Lightweight mobile-friendly backbones.
+- **ConvNeXt**: Modernized ConvNet architectures.
+- **Swin Transformer**: Hierarchical vision transformer.
 """
 
-from corecv.models.backbones.convnext import (
-    ConvNeXtBaseBackbone,
-    ConvNeXtLargeBackbone,
-    ConvNeXtSmallBackbone,
-    ConvNeXtTinyBackbone,
-)
-from corecv.models.backbones.mobilenetv3 import (
-    MobileNetV3LargeBackbone,
-    MobileNetV3SmallBackbone,
-)
-from corecv.models.backbones.resnet import (
-    ResNet18Backbone,
-    ResNet34Backbone,
-    ResNet50Backbone,
-    ResNet101Backbone,
-)
-from corecv.models.backbones.vit import (
-    SimplePyramidAdapter,
-    ViTBaseBackbone,
-    ViTSmallBackbone,
-    ViTTinyBackbone,
-)
+from __future__ import annotations
+
+from typing import Literal
+
+from corecv.models.backbones.base import BaseBackbone, FeatureInfo
+from corecv.models.backbones.convnext import ConvNeXtBackbone
+from corecv.models.backbones.mobilenetv3 import MobileNetV3Backbone
+from corecv.models.backbones.resnet import ResNetBackbone
+from corecv.models.backbones.swin import SwinTransformerBackbone
+
+# Union of all supported backbone variant names.
+BackboneName = Literal[
+    "resnet18",
+    "resnet34",
+    "resnet50",
+    "resnet101",
+    "resnet152",
+    "mobilenetv3_large",
+    "mobilenetv3_small",
+    "convnext_tiny",
+    "convnext_small",
+    "convnext_base",
+    "swin_t",
+    "swin_s",
+    "swin_b",
+]
+
+# Registry mapping variant name -> backbone class.
+_BACKBONE_REGISTRY: dict[str, type[BaseBackbone]] = {
+    "resnet18": ResNetBackbone,
+    "resnet34": ResNetBackbone,
+    "resnet50": ResNetBackbone,
+    "resnet101": ResNetBackbone,
+    "resnet152": ResNetBackbone,
+    "mobilenetv3_large": MobileNetV3Backbone,
+    "mobilenetv3_small": MobileNetV3Backbone,
+    "convnext_tiny": ConvNeXtBackbone,
+    "convnext_small": ConvNeXtBackbone,
+    "convnext_base": ConvNeXtBackbone,
+    "swin_t": SwinTransformerBackbone,
+    "swin_s": SwinTransformerBackbone,
+    "swin_b": SwinTransformerBackbone,
+}
+
+
+def create_backbone(
+    name: BackboneName,
+    *,
+    pretrained: bool = False,
+) -> BaseBackbone:
+    """Create a backbone by name.
+
+    Args:
+        name: Backbone variant name (e.g., ``resnet50``, ``swin_t``).
+        pretrained: If ``True``, load ImageNet-1K pretrained weights.
+
+    Returns:
+        An instantiated :class:`BaseBackbone` subclass.
+
+    Raises:
+        ValueError: If *name* is not a recognized backbone variant.
+
+    Example:
+        >>> from corecv.models.backbones import create_backbone
+        >>> backbone = create_backbone("resnet50", pretrained=True)
+        >>> backbone.feature_info.channels
+        [256, 512, 1024, 2048]
+    """
+    if name not in _BACKBONE_REGISTRY:
+        msg = f"Unknown backbone: {name!r}. Choose from {list(_BACKBONE_REGISTRY)}"
+        raise ValueError(msg)
+
+    backbone_cls = _BACKBONE_REGISTRY[name]
+
+    # ResNet, MobileNetV3, ConvNeXt, and Swin all accept (variant, pretrained).
+    return backbone_cls(name, pretrained=pretrained)  # type: ignore[call-arg]
+
 
 __all__ = [
-    # MobileNetV3
-    "MobileNetV3SmallBackbone",
-    "MobileNetV3LargeBackbone",
-    # ResNet
-    "ResNet18Backbone",
-    "ResNet34Backbone",
-    "ResNet50Backbone",
-    "ResNet101Backbone",
-    # ConvNeXt
-    "ConvNeXtTinyBackbone",
-    "ConvNeXtSmallBackbone",
-    "ConvNeXtBaseBackbone",
-    "ConvNeXtLargeBackbone",
-    # ViT
-    "ViTTinyBackbone",
-    "ViTSmallBackbone",
-    "ViTBaseBackbone",
-    # Adapter (public for downstream composition)
-    "SimplePyramidAdapter",
+    "BackboneName",
+    "BaseBackbone",
+    "ConvNeXtBackbone",
+    "FeatureInfo",
+    "MobileNetV3Backbone",
+    "ResNetBackbone",
+    "SwinTransformerBackbone",
+    "create_backbone",
 ]

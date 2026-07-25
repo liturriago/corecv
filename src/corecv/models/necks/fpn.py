@@ -1,191 +1,141 @@
-"""Feature Pyramid Network (FPN) neck implementation.
+"""Feature Pyramid Network (FPN) neck for CoreCV.
 
-Implements the FPN architecture from "Feature Pyramid Networks for Object
-Detection" (Lin et al., 2017). The FPN augments a backbone's multi-scale
-feature maps with a top-down pathway and lateral connections, producing
-pyramid feature maps at every scale with a uniform channel dimension.
+Implements a standard top-down FPN that consumes multi-scale features from
+backbones and produces feature maps with unified channel dimensions for
+detection and segmentation heads.
 
-Architecture
-------------
-
-Given backbone feature levels ``[C2, C3, C4, C5]`` at strides
-``[4, 8, 16, 32]``:
-
-1. **Lateral 1x1 convolutions** project each level to ``out_channels``.
-2. **Top-down pathway** merges coarse features into finer scales via
-   nearest-neighbour upsampling and element-wise addition.
-3. **Output 3x3 convolutions** reduce aliasing artifacts from upsampling.
-
-The result is ``[P2, P3, P4, P5]`` -- one feature map per backbone level,
-all with ``out_channels`` channels.
-
-Dynamic Channel Projection
---------------------------
-
-The neck accepts any :class:`~corecv.core.contract.FeatureInfo` and
-automatically instantiates the correct number of 1x1 lateral convolutions
-with input channels derived from the backbone metadata. This means the
-same :class:`FPN` class works with ResNet, MobileNetV3, ConvNeXt, ViT,
-or any future backbone that implements :class:`BaseBackbone`.
-
-Example:
-    >>> from corecv.models.backbones.resnet import ResNet50Backbone
-    >>> from corecv.models.necks.fpn import FPN
-    >>> backbone = ResNet50Backbone(pretrained=False)
-    >>> neck = FPN(feature_info=backbone.feature_info, out_channels=256)
-    >>> features = backbone(torch.randn(1, 3, 224, 224))
-    >>> pyramid = neck(features)
-    >>> tuple(f.shape for f in pyramid)
-    (torch.Size([1, 256, 56, 56]), torch.Size([1, 256, 28, 28]),
-     torch.Size([1, 256, 14, 14]), torch.Size([1, 256, 7, 7]))
+Reference:
+    Lin et al., "Feature Pyramid Networks for Object Detection", CVPR 2017.
 """
 
 from __future__ import annotations
 
-from collections import OrderedDict
-from collections.abc import Sequence
-
 import torch
-import torch.nn.functional as F
-from torch import nn
-
-from corecv.core.contract import FeatureInfo
-from corecv.core.registry import register_neck
+from torch import Tensor, nn
 
 
-def _sorted_levels(
-    feature_info: FeatureInfo,
-) -> list[tuple[str, int, int]]:
-    """Sort feature levels by stride in ascending order.
-
-    Args:
-        feature_info: Backbone feature metadata.
-
-    Returns:
-        A list of ``(level_name, stride, in_channels)`` tuples sorted
-        from smallest to largest stride.
-    """
-    pairs = [
-        (name, feature_info.strides[name], feature_info.channels[name])
-        for name in feature_info.channels
-    ]
-    return sorted(pairs, key=lambda x: x[1])
-
-
-@register_neck("fpn")
 class FPN(nn.Module):
-    """Feature Pyramid Network neck with dynamic channel projection.
+    """Feature Pyramid Network with top-down pathway and lateral connections.
 
-    Produces a multi-scale feature pyramid from a backbone's intermediate
-    feature maps.  The number of lateral convolutions, their input channels,
-    and the interpolation targets are all derived at construction time from
-    the provided :class:`FeatureInfo`, making this neck backbone-agnostic.
+    Accepts a list of multi-scale feature maps ordered from finest to coarsest
+    resolution (e.g., ``[C1, C2, C3, C4]``) and produces a list of feature
+    maps with unified channel dimensions (``[P1, P2, P3, P4]``).
 
-    Attributes:
-        out_channels: Uniform channel count for all output feature levels.
-        levels: Sorted list of ``(level_name, stride, in_channels)`` tuples.
-        lateral_convs: Module mapping level name -> 1x1 conv for channel
-            alignment in the top-down pathway.
-        fpn_convs: Module mapping level name -> 3x3 conv applied after the
-            top-down merge to reduce upsampling aliasing.
+    The top-down pathway merges coarser features into finer ones via
+    element-wise addition after 1x1 channel projection (lateral connections),
+    followed by a 3x3 convolution to reduce aliasing artifacts.
+
+    Example:
+        >>> import torch
+        >>> from corecv.models.necks.fpn import FPN
+        >>> neck = FPN(in_channels=[64, 128, 256, 512], out_channels=256)
+        >>> feats = [torch.randn(2, c, h, w) for c, h, w in
+        ...          [(64, 64, 64), (128, 32, 32), (256, 16, 16), (512, 8, 8)]]
+        >>> outputs = neck(feats)
+        >>> [o.shape for o in outputs]
+        [torch.Size([2, 256, 64, 64]), torch.Size([2, 256, 32, 32]),
+         torch.Size([2, 256, 16, 16]), torch.Size([2, 256, 8, 8])]
     """
 
     def __init__(
         self,
-        feature_info: FeatureInfo,
+        in_channels: list[int],
         out_channels: int = 256,
     ) -> None:
-        """Initialise the FPN neck.
+        """Initialize the Feature Pyramid Network.
 
         Args:
-            feature_info: Metadata describing the backbone's feature levels.
-                Used to determine the number of levels and their input
-                channel counts for lateral convolution construction.
-            out_channels: Output channel dimension for every pyramid level.
-                All lateral 1x1 convolutions project to this width.
+            in_channels: Channel dimensions of each input feature level,
+                ordered from finest (highest resolution) to coarsest.
+            out_channels: Number of channels in each output feature map.
         """
         super().__init__()
+        self.in_channels = in_channels
         self.out_channels = out_channels
-        self.levels = _sorted_levels(feature_info)
+        num_levels = len(in_channels)
 
-        # 1x1 lateral convolutions: project backbone channels -> out_channels
-        lateral_convs: list[tuple[str, nn.Module]] = []
-        # 3x3 output convolutions: suppress upsampling aliasing
-        fpn_convs: list[tuple[str, nn.Module]] = []
+        # Lateral 1x1 convolutions: project each backbone feature to out_channels
+        self.lateral_convs = nn.ModuleList(
+            [nn.Conv2d(in_ch, out_channels, kernel_size=1) for in_ch in in_channels],
+        )
 
-        for name, _stride, in_ch in self.levels:
-            lateral_convs.append(
-                (
-                    name,
-                    nn.Conv2d(in_ch, out_channels, kernel_size=1),
-                )
-            )
-            fpn_convs.append(
-                (
-                    name,
-                    nn.Conv2d(
-                        out_channels,
-                        out_channels,
-                        kernel_size=3,
-                        padding=1,
-                    ),
-                )
-            )
+        # Output 3x3 convolutions: reduce aliasing after top-down merge
+        self.output_convs = nn.ModuleList(
+            [
+                nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1)
+                for _ in range(num_levels)
+            ],
+        )
 
-        self.lateral_convs = nn.ModuleDict(OrderedDict(lateral_convs))
-        self.fpn_convs = nn.ModuleDict(OrderedDict(fpn_convs))
+        self._init_weights()
 
-    # ------------------------------------------------------------------
-    # Forward
-    # ------------------------------------------------------------------
+    def _init_weights(self) -> None:
+        """Initialize convolution weights with Kaiming uniform initialization."""
+        for module in self.modules():
+            if isinstance(module, nn.Conv2d):
+                nn.init.kaiming_uniform_(module.weight, nonlinearity="linear")
+                if module.bias is not None:
+                    nn.init.zeros_(module.bias)
 
-    def forward(self, features: Sequence[torch.Tensor]) -> list[torch.Tensor]:
-        """Apply the FPN top-down pathway to backbone features.
+    def forward(self, features: list[Tensor]) -> list[Tensor]:
+        """Run the top-down feature pyramid on multi-scale backbone features.
 
         Args:
-            features: Sequence of backbone feature tensors **in stride-
-                ascending order** (i.e. highest resolution first).  The
-                length must match the number of levels in the
-                :class:`FeatureInfo` provided at construction time.
+            features: List of multi-scale feature tensors ordered from finest
+                (highest spatial resolution) to coarsest, each with shape
+                ``(B, C_i, H_i, W_i)``.
 
         Returns:
-            A list of pyramid feature tensors in stride-ascending order
-            (smallest stride first), each with shape
-            ``(B, out_channels, H_i, W_i)``.
-
-        Raises:
-            ValueError: If the number of input features does not match
-                the number of registered backbone levels.
+            List of feature tensors with unified channel dimension
+            ``(B, out_channels, H_i, W_i)``, same order as input.
         """
-        if len(features) != len(self.levels):
-            msg = (
-                f"Expected {len(self.levels)} feature maps "
-                f"(one per backbone level), received {len(features)}."
+        # Step 1: Apply lateral 1x1 convolutions to all levels
+        laterals = [conv(feat) for conv, feat in zip(self.lateral_convs, features, strict=True)]
+
+        # Step 2: Top-down pathway — upsample coarser features and merge
+        for idx in range(len(laterals) - 1, 0, -1):
+            # Upsample the coarser level to match the spatial size of the finer level
+            upsampled = nn.functional.interpolate(
+                laterals[idx],
+                size=laterals[idx - 1].shape[2:],
+                mode="bilinear",
+                align_corners=False,
             )
-            raise ValueError(msg)
+            laterals[idx - 1] = laterals[idx - 1] + upsampled
 
-        # Step 1 -- Lateral projections (1x1 convs) to uniform channel dim
-        laterals: list[torch.Tensor] = []
-        for i, (name, _stride, _in_ch) in enumerate(self.levels):
-            laterals.append(self.lateral_convs[name](features[i]))
+        # Step 3: Apply output 3x3 convolutions to all merged levels
+        return [conv(lat) for conv, lat in zip(self.output_convs, laterals, strict=True)]
 
-        # Step 2 -- Top-down pathway (deepest -> shallowest)
-        # Start from the deepest level (last element) and propagate
-        # coarser features into finer scales via nearest-neighbour upsample
-        # and element-wise addition.
-        for i in range(len(self.levels) - 1, 0, -1):
-            target_h = laterals[i - 1].shape[-2]
-            target_w = laterals[i - 1].shape[-1]
-            upsampled = F.interpolate(
-                laterals[i],
-                size=(target_h, target_w),
-                mode="nearest",
-            )
-            laterals[i - 1] = laterals[i - 1] + upsampled
 
-        # Step 3 -- Output 3x3 convolutions to reduce aliasing
-        outputs: list[torch.Tensor] = []
-        for i, (name, _stride, _in_ch) in enumerate(self.levels):
-            outputs.append(self.fpn_convs[name](laterals[i]))
+if __name__ == "__main__":
+    torch.manual_seed(42)
 
-        return outputs
+    # Simulate ResNet-style backbone features: C2=64, C3=128, C4=256, C5=512
+    batch_size = 2
+    in_channels_list = [64, 128, 256, 512]
+    out_channels = 256
+    spatial_sizes = [(64, 64), (32, 32), (16, 16), (8, 8)]
+
+    dummy_features = [
+        torch.randn(batch_size, c, h, w)
+        for c, (h, w) in zip(in_channels_list, spatial_sizes, strict=True)
+    ]
+
+    fpn = FPN(in_channels=in_channels_list, out_channels=out_channels)
+    fpn.eval()
+
+    with torch.no_grad():
+        outputs = fpn(dummy_features)
+
+    print("--- FPN Forward Pass ---")  # noqa: T201
+    for i, (inp, out) in enumerate(zip(dummy_features, outputs, strict=True)):
+        print(  # noqa: T201
+            f"  Level {i}: input {inp.shape} -> output {out.shape}",
+        )
+
+    # Verify output channels
+    assert all(o.shape[1] == out_channels for o in outputs), "Channel mismatch!"  # noqa: S101
+    # Verify spatial sizes are preserved
+    for inp, out in zip(dummy_features, outputs, strict=True):
+        assert inp.shape[2:] == out.shape[2:], "Spatial size mismatch!"  # noqa: S101
+    print("All assertions passed.")  # noqa: T201

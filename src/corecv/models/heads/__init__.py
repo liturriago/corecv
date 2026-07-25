@@ -1,38 +1,23 @@
-"""Head modules for CoreCV.
+"""Heads subpackage for CoreCV.
 
-Provides :class:`~corecv.core.contract.FeatureInfo`-aware head modules for
-classification, segmentation, and object detection tasks.  All heads
-dynamically adapt to backbone metadata, making them backbone-agnostic.
+This subpackage contains task-specific prediction heads that consume
+multi-scale features from backbones (via optional necks).  Supported
+heads:
 
-Available heads
----------------
-
-Classification
-    * :class:`~corecv.models.heads.classification.LinearClassificationHead`
-      (``linear_classification``) -- global average pooling + FC layer.
-
-Segmentation
-    * :class:`~corecv.models.heads.segmentation.ResUNetDecoder`
-      (``resunet_decoder``) -- U-Net style decoder with residual blocks.
-    * :class:`~corecv.models.heads.segmentation.ASPPDecoder`
-      (``aspp_decoder``) -- DeepLabV3+ style decoder with ASPP module.
-
-Detection
-    * :class:`~corecv.models.heads.detection.DecoupledAnchorFreeHead`
-      (``decoupled_anchor_free``) -- FCOS/YOLOX-style pure-conv head.
-    * :class:`~corecv.models.heads.detection.QueryDetectionHead`
-      (``query_detection``) -- RT-DETR/D-FINE-style transformer decoder
-      head with learnable queries.
+- **Classification**: Global average pooling + linear classifier.
+- **Segmentation**: DeepLabV3+ and ResUNetDecoder for semantic segmentation.
+- **Detection**: Anchor-free dual-head (O2M + O2O) detection head.
 """
 
-from corecv.models.heads.classification import LinearClassificationHead
-from corecv.models.heads.detection import DecoupledAnchorFreeHead, QueryDetectionHead
-from corecv.models.heads.segmentation import ASPPDecoder, ResUNetDecoder
+from __future__ import annotations
+
+from corecv.models.heads.classification import ClassificationHead
+from corecv.models.heads.detection import AnchorFreeDetectionHead
+from corecv.models.heads.segmentation import DeepLabV3PlusHead, ResUNetDecoder
 
 __all__ = [
-    "LinearClassificationHead",
+    "AnchorFreeDetectionHead",
+    "ClassificationHead",
+    "DeepLabV3PlusHead",
     "ResUNetDecoder",
-    "ASPPDecoder",
-    "DecoupledAnchorFreeHead",
-    "QueryDetectionHead",
 ]

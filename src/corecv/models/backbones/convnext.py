@@ -1,250 +1,172 @@
-"""ConvNeXt backbone with multi-scale feature extraction.
+"""ConvNeXt backbone for CoreCV.
 
-Wraps :mod:`torchvision.models` ConvNeXt variants (Tiny, Small, Base, Large)
-and extracts intermediate feature maps at four spatial scales.  Each
-ConvNeXt ``features`` Sequential contains eight :class:`torch.nn.Sequential`
-stages paired into four resolution groups; the last stage of each group is
-used as the extracted feature level.
+Provides ConvNeXt variants (Tiny, Small, Base, Large) as modernized
+ConvNet feature extractors with ``FeatureInfo`` metadata.
 
-Extracted feature levels (verified against torchvision output shapes,
-224x224 input):
-
-.. list-table::
-   :header-rows: 1
-   :widths: 16 12 10 14 14 14 14
-
-   * - Level
-     - Index
-     - Stride
-     - Tiny
-     - Small
-     - Base
-     - Large
-   * - ``stride4``
-     - 1
-     - 4
-     - 96
-     - 96
-     - 128
-     - 192
-   * - ``stride8``
-     - 3
-     - 8
-     - 192
-     - 192
-     - 256
-     - 384
-   * - ``stride16``
-     - 5
-     - 16
-     - 384
-     - 384
-     - 512
-     - 768
-   * - ``stride32``
-     - 7
-     - 32
-     - 768
-     - 768
-     - 1024
-     - 1536
-
-Example:
-    >>> from corecv.models.backbones.convnext import ConvNeXtTinyBackbone
-    >>> backbone = ConvNeXtTinyBackbone(pretrained=False)
-    >>> backbone.feature_info.channels
-    {'stride4': 96, 'stride8': 192, 'stride16': 384, 'stride32': 768}
+ConvNeXt uses a hierarchical design with four stages, each consisting
+of a downsampling (patchify) layer followed by multiple ConvNeXt blocks.
+Features are extracted after each stage with strides 4x, 8x, 16x, 32x.
 """
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Literal
 
 import torch
+from torch import Tensor, nn
 from torchvision.models import (
     ConvNeXt_Base_Weights,
-    ConvNeXt_Large_Weights,
     ConvNeXt_Small_Weights,
     ConvNeXt_Tiny_Weights,
     convnext_base,
-    convnext_large,
     convnext_small,
     convnext_tiny,
 )
 
-from corecv.core.contract import BaseBackbone, FeatureInfo
-from corecv.core.registry import register_backbone
+from corecv.models.backbones.base import BaseBackbone, FeatureInfo
 
-# ---------------------------------------------------------------------------
-# Channel configuration per ConvNeXt variant
-# ---------------------------------------------------------------------------
+# Type alias for supported ConvNeXt variants.
+ConvNeXtVariant = Literal["convnext_tiny", "convnext_small", "convnext_base"]
 
-_CONVNEXT_VARIANTS: dict[str, dict[str, Any]] = {
-    "convnext_tiny": {
-        "factory": convnext_tiny,
-        "weights": ConvNeXt_Tiny_Weights,
-        "channels": {
-            "stride4": 96,
-            "stride8": 192,
-            "stride16": 384,
-            "stride32": 768,
-        },
-    },
-    "convnext_small": {
-        "factory": convnext_small,
-        "weights": ConvNeXt_Small_Weights,
-        "channels": {
-            "stride4": 96,
-            "stride8": 192,
-            "stride16": 384,
-            "stride32": 768,
-        },
-    },
-    "convnext_base": {
-        "factory": convnext_base,
-        "weights": ConvNeXt_Base_Weights,
-        "channels": {
-            "stride4": 128,
-            "stride8": 256,
-            "stride16": 512,
-            "stride32": 1024,
-        },
-    },
-    "convnext_large": {
-        "factory": convnext_large,
-        "weights": ConvNeXt_Large_Weights,
-        "channels": {
-            "stride4": 192,
-            "stride8": 384,
-            "stride16": 768,
-            "stride32": 1536,
-        },
-    },
+# Maps variant name -> (constructor, default weights factory).
+_CONVNEXT_REGISTRY: dict[str, tuple[type, type]] = {
+    "convnext_tiny": (convnext_tiny, ConvNeXt_Tiny_Weights),
+    "convnext_small": (convnext_small, ConvNeXt_Small_Weights),
+    "convnext_base": (convnext_base, ConvNeXt_Base_Weights),
 }
 
-# Feature extraction indices: last stage of each resolution group.
-_CONVNEXT_FEATURE_INDICES: list[int] = [1, 3, 5, 7]
+# ConvNeXt features layout (torchvision >= 0.15):
+#   [0] = Stem (Conv2dNormActivation)          -> stride 4
+#   [1] = Stage 0 blocks (Sequential)          -> stride 4  (no downsample)
+#   [2] = Stage 1 downsample + blocks          -> stride 8
+#   [3] = Stage 1 blocks continued             -> stride 8
+#   [4] = Stage 2 downsample + blocks          -> stride 16
+#   [5] = Stage 2 blocks continued             -> stride 16
+#   [6] = Stage 3 downsample + blocks          -> stride 32
+#   [7] = Stage 3 blocks continued             -> stride 32
+# We extract features after the last block of each stage: indices [1, 3, 5, 7].
+_EXTRACT_INDICES: list[int] = [1, 3, 5, 7]
 
 
-class _ConvNeXtBackbone(BaseBackbone):
-    """Shared base for all ConvNeXt backbone variants.
+class ConvNeXtBackbone(BaseBackbone):
+    """ConvNeXt multi-scale feature extractor.
 
-    Iterates through ``features`` :class:`torch.nn.Sequential` and collects
-    outputs at indices 1, 3, 5, and 7 (the last block of each resolution
-    group).
+    Wraps a TorchVision ``ConvNeXt`` model and exposes four feature levels
+    (C2-C5) extracted after each of the four hierarchical stages.
 
-    This class should not be instantiated directly; use the variant-specific
-    subclasses.
+    Example:
+        >>> import torch
+        >>> from corecv.models.backbones.convnext import ConvNeXtBackbone
+        >>> backbone = ConvNeXtBackbone("convnext_tiny", pretrained=False)
+        >>> x = torch.randn(2, 3, 224, 224)
+        >>> features, info = backbone(x)
+        >>> [f.shape for f in features]
+        [torch.Size([2, 96, 56, 56]), torch.Size([2, 192, 28, 28]),
+         torch.Size([2, 384, 14, 14]), torch.Size([2, 768, 7, 7])]
     """
 
-    _variant_key: str
-
-    def __init__(self, pretrained: bool = True, **kwargs: object) -> None:
-        """Initialise the ConvNeXt backbone.
+    def __init__(
+        self,
+        variant: ConvNeXtVariant = "convnext_tiny",
+        *,
+        pretrained: bool = False,
+    ) -> None:
+        """Initialize the ConvNeXt backbone.
 
         Args:
+            variant: ConvNeXt variant name. One of ``convnext_tiny``,
+                ``convnext_small``, ``convnext_base``.
             pretrained: If ``True``, load ImageNet-1K pretrained weights.
-            **kwargs: Additional keyword arguments forwarded to the
-                underlying ``convnext_*`` factory.
         """
-        super().__init__()
-        cfg = _CONVNEXT_VARIANTS[self._variant_key]
-        weights = cfg["weights"].IMAGENET1K_V1 if pretrained else None
-        self._model = cfg["factory"](weights=weights, **kwargs)
+        if variant not in _CONVNEXT_REGISTRY:
+            msg = f"Unknown ConvNeXt variant: {variant!r}. Choose from {list(_CONVNEXT_REGISTRY)}"
+            raise ValueError(msg)
 
-    @property
-    def feature_info(self) -> FeatureInfo:
-        """Return channel and stride metadata for all extracted feature levels.
+        constructor, weights_cls = _CONVNEXT_REGISTRY[variant]
+        weights = weights_cls.DEFAULT if pretrained else None
+        model = constructor(weights=weights)
 
-        Returns:
-            A :class:`FeatureInfo` with keys ``stride4``, ``stride8``,
-            ``stride16``, and ``stride32``.
-        """
-        cfg = _CONVNEXT_VARIANTS[self._variant_key]
-        return FeatureInfo(
-            channels=dict(cfg["channels"]),
-            strides={
-                "stride4": 4,
-                "stride8": 8,
-                "stride16": 16,
-                "stride32": 32,
-            },
+        # Infer channel dimensions via dummy forward pass on model features.
+        channels = self._infer_channels_static(model.features)
+
+        feature_info = FeatureInfo(
+            channels=channels,
+            strides=[4, 8, 16, 32],
+            names=["C2", "C3", "C4", "C5"],
         )
+        super().__init__(feature_info=feature_info)
 
-    def forward(self, x: torch.Tensor) -> list[torch.Tensor]:
-        """Extract multi-scale features from the ConvNeXt backbone.
+        # Assign component as submodule after super().__init__.
+        self.features: nn.Sequential = model.features
 
-        Runs the input through ``features`` Sequential and collects the
-        output at the last block of each resolution group.
+    @staticmethod
+    def _infer_channels_static(features: nn.Sequential) -> list[int]:
+        """Infer output channel counts via a dummy forward pass.
 
         Args:
-            x: Input tensor of shape ``(B, 3, H, W)``.
+            features: The ConvNeXt features sequential module.
 
         Returns:
-            A list of four feature tensors at strides 4, 8, 16, and 32.
+            List of four channel counts for each stage.
         """
-        features: list[torch.Tensor] = []
-        target_set: set[int] = set(_CONVNEXT_FEATURE_INDICES)
+        dummy = torch.randn(1, 3, 224, 224)
+        x = dummy
+        for stage_idx in range(len(features)):
+            x = features[stage_idx](x)
+        # Extract channels at the end of each stage.
+        channels: list[int] = []
+        dummy2 = torch.randn(1, 3, 224, 224)
+        x2 = dummy2
+        for stage_idx in range(len(features)):
+            x2 = features[stage_idx](x2)
+            if stage_idx in _EXTRACT_INDICES:
+                channels.append(x2.shape[1])
+        return channels
 
-        for i, layer in enumerate(self._model.features):
-            x = layer(x)
-            if i in target_set:
+    def forward(self, x: Tensor) -> tuple[list[Tensor], FeatureInfo]:
+        """Extract multi-scale features from the input tensor.
+
+        Args:
+            x: Input image tensor of shape ``(B, 3, H, W)``.
+
+        Returns:
+            Tuple of ``(features, feature_info)`` where *features* is a
+            list of four feature tensors with strides 4x, 8x, 16x, 32x,
+            and *feature_info* contains channel/stride metadata.
+        """
+        features: list[Tensor] = []
+        for stage_idx in range(len(self.features)):
+            x = self.features[stage_idx](x)
+            if stage_idx in _EXTRACT_INDICES:
                 features.append(x)
 
-        return features
+        return features, self.feature_info
 
 
-@register_backbone("convnext_tiny")
-class ConvNeXtTinyBackbone(_ConvNeXtBackbone):
-    """ConvNeXt-Tiny backbone.
+# ---------------------------------------------------------------------------
+# Sanity check
+# ---------------------------------------------------------------------------
 
-    Feature levels:
-        - ``stride4``: 96 channels
-        - ``stride8``: 192 channels
-        - ``stride16``: 384 channels
-        - ``stride32``: 768 channels
-    """
+if __name__ == "__main__":
+    torch.manual_seed(42)
 
-    _variant_key = "convnext_tiny"
+    for variant in ("convnext_tiny", "convnext_small", "convnext_base"):
+        backbone = ConvNeXtBackbone(variant=variant, pretrained=False)
+        backbone.eval()
 
+        dummy_input = torch.randn(1, 3, 224, 224)
+        with torch.no_grad():
+            features, info = backbone(dummy_input)
 
-@register_backbone("convnext_small")
-class ConvNeXtSmallBackbone(_ConvNeXtBackbone):
-    """ConvNeXt-Small backbone.
+        print(f"--- {variant} ---")  # noqa: T201
+        for i, (feat, ch, stride) in enumerate(
+            zip(features, info.channels, info.strides, strict=True),
+        ):
+            print(  # noqa: T201
+                f"  Level {i} ({info.names[i]}): "
+                f"channels={ch}, stride={stride}, "
+                f"shape={feat.shape}",
+            )
 
-    Feature levels:
-        - ``stride4``: 96 channels
-        - ``stride8``: 192 channels
-        - ``stride16``: 384 channels
-        - ``stride32``: 768 channels
-    """
-
-    _variant_key = "convnext_small"
-
-
-@register_backbone("convnext_base")
-class ConvNeXtBaseBackbone(_ConvNeXtBackbone):
-    """ConvNeXt-Base backbone.
-
-    Feature levels:
-        - ``stride4``: 128 channels
-        - ``stride8``: 256 channels
-        - ``stride16``: 512 channels
-        - ``stride32``: 1024 channels
-    """
-
-    _variant_key = "convnext_base"
-
-
-@register_backbone("convnext_large")
-class ConvNeXtLargeBackbone(_ConvNeXtBackbone):
-    """ConvNeXt-Large backbone.
-
-    Feature levels:
-        - ``stride4``: 192 channels
-        - ``stride8``: 384 channels
-        - ``stride16``: 768 channels
-        - ``stride32``: 1536 channels
-    """
-
-    _variant_key = "convnext_large"
+        assert [f.shape[1] for f in features] == info.channels, "Channel mismatch!"  # noqa: S101
+    print("\nAll ConvNeXt backbone tests passed.")  # noqa: T201

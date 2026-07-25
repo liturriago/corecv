@@ -1,47 +1,19 @@
-"""MobileNetV3 backbone with multi-scale feature extraction.
+"""MobileNetV3 backbone for CoreCV.
 
-Wraps :mod:`torchvision.models.mobilenet_v3_small` and
-:mod:`torchvision.models.mobilenet_v3_large` to expose four feature levels
-at strides 4, 8, 16, and 32.  Feature maps are extracted at the last block
-of each spatial resolution stage.
+Provides MobileNetV3-Small and MobileNetV3-Large variants as lightweight
+feature extractors with ``FeatureInfo`` metadata.
 
-Extracted feature levels (verified against torchvision output shapes):
-
-- **MobileNetV3-Small** (``features`` Sequential, 224x224 input):
-
-  ============ ===== ======= =========================
-  Level        Index Spatial Channel Count
-  ============ ===== ======= =========================
-  ``stride4``  1     56x56   16
-  ``stride8``  3     28x28   24
-  ``stride16`` 8     14x14   48
-  ``stride32`` 12    7x7     576
-  ============ ===== ======= =========================
-
-- **MobileNetV3-Large** (``features`` Sequential, 224x224 input):
-
-  ============ ===== ======= =========================
-  Level        Index Spatial Channel Count
-  ============ ===== ======= =========================
-  ``stride4``  3     56x56   24
-  ``stride8``  6     28x28   40
-  ``stride16`` 12    14x14   112
-  ``stride32`` 16    7x7     960
-  ============ ===== ======= =========================
-
-Example:
-    >>> from corecv.models.backbones.mobilenetv3 import MobileNetV3SmallBackbone
-    >>> backbone = MobileNetV3SmallBackbone(pretrained=False)
-    >>> backbone.feature_info.channels
-    {'stride4': 16, 'stride8': 24, 'stride16': 48, 'stride32': 576}
+MobileNetV3 uses an inverted-residual architecture with squeeze-and-excitation
+blocks.  Features are extracted at three stages with approximate strides
+8x, 16x, and 32x.
 """
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-from typing import Any
+from typing import Literal
 
 import torch
+from torch import Tensor, nn
 from torchvision.models import (
     MobileNet_V3_Large_Weights,
     MobileNet_V3_Small_Weights,
@@ -49,139 +21,154 @@ from torchvision.models import (
     mobilenet_v3_small,
 )
 
-from corecv.core.contract import BaseBackbone, FeatureInfo
-from corecv.core.registry import register_backbone
+from corecv.models.backbones.base import BaseBackbone, FeatureInfo
+
+# Type alias for supported MobileNetV3 variants.
+MobileNetV3Variant = Literal["mobilenetv3_large", "mobilenetv3_small"]
+
+# Maps variant name -> (constructor, default weights factory).
+_MOBILENET_REGISTRY: dict[str, tuple[type, type]] = {
+    "mobilenetv3_large": (mobilenet_v3_large, MobileNet_V3_Large_Weights),
+    "mobilenetv3_small": (mobilenet_v3_small, MobileNet_V3_Small_Weights),
+}
 
 
-class _MobileNetV3Backbone(BaseBackbone):
-    """Shared base for MobileNetV3-Small and MobileNetV3-Large backbones.
+class MobileNetV3Backbone(BaseBackbone):
+    """MobileNetV3 multi-scale feature extractor.
 
-    Iterates through the ``features`` :class:`torch.nn.Sequential` and
-    collects outputs at specific block indices that correspond to spatial
-    resolution boundaries.
+    Wraps a TorchVision ``MobileNetV3`` model and exposes features at
+    three key stages (approximately strides 8x, 16x, 32x).
 
-    This class should not be instantiated directly; use
-    :class:`MobileNetV3SmallBackbone` or :class:`MobileNetV3LargeBackbone`.
+    The specific block indices where features are extracted are chosen to
+    match common detection/segmentation conventions:
+
+    - **Large**: blocks 3, 8, 14 (before downsampling transitions).
+    - **Small**: blocks 1, 3, 8.
+
+    Example:
+        >>> import torch
+        >>> from corecv.models.backbones.mobilenetv3 import MobileNetV3Backbone
+        >>> backbone = MobileNetV3Backbone("mobilenetv3_large", pretrained=False)
+        >>> x = torch.randn(2, 3, 224, 224)
+        >>> features, info = backbone(x)
+        >>> [f.shape for f in features]
+        [torch.Size([2, 40, 28, 28]), torch.Size([2, 96, 14, 14]),
+         torch.Size([2, 960, 7, 7])]
     """
 
-    # Subclasses override these.
-    _model_factory: Any
-    _weights_enum: Any
-    _feature_indices: dict[str, int]
-    _feature_channels: dict[str, int]
-
-    def __init__(self, pretrained: bool = True, **kwargs: object) -> None:
-        """Initialise the MobileNetV3 backbone.
+    def __init__(
+        self,
+        variant: MobileNetV3Variant = "mobilenetv3_large",
+        *,
+        pretrained: bool = False,
+    ) -> None:
+        """Initialize the MobileNetV3 backbone.
 
         Args:
+            variant: MobileNetV3 variant name. One of ``mobilenetv3_large``,
+                ``mobilenetv3_small``.
             pretrained: If ``True``, load ImageNet-1K pretrained weights.
-            **kwargs: Additional keyword arguments forwarded to the
-                underlying ``mobilenet_v3_*`` factory.
         """
-        super().__init__()
-        weights = self._weights_enum.IMAGENET1K_V1 if pretrained else None
-        self._model = self._model_factory(weights=weights, **kwargs)
+        if variant not in _MOBILENET_REGISTRY:
+            msg = (
+                f"Unknown MobileNetV3 variant: {variant!r}. Choose from {list(_MOBILENET_REGISTRY)}"
+            )
+            raise ValueError(msg)
 
-    @property
-    def feature_info(self) -> FeatureInfo:
-        """Return channel and stride metadata for all extracted feature levels.
+        constructor, weights_cls = _MOBILENET_REGISTRY[variant]
+        weights = weights_cls.DEFAULT if pretrained else None
+        model = constructor(weights=weights)
 
-        Returns:
-            A :class:`FeatureInfo` with keys ``stride4``, ``stride8``,
-            ``stride16``, and ``stride32``.
-        """
-        return FeatureInfo(
-            channels=dict(self._feature_channels),
-            strides={
-                "stride4": 4,
-                "stride8": 8,
-                "stride16": 16,
-                "stride32": 32,
-            },
+        # Determine extraction indices based on variant.
+        if variant == "mobilenetv3_large":
+            _extract_indices: list[int] = [3, 8, 14]
+            _strides: list[int] = [8, 16, 32]
+            _names: list[str] = ["C3", "C4", "C5"]
+        else:
+            _extract_indices: list[int] = [1, 3, 8]
+            _strides: list[int] = [8, 16, 32]
+            _names: list[str] = ["C3", "C4", "C5"]
+
+        # Infer channel dimensions via dummy forward pass on model features.
+        channels = self._infer_channels_static(model.features, _extract_indices)
+
+        feature_info = FeatureInfo(
+            channels=channels,
+            strides=_strides,
+            names=_names,
         )
+        super().__init__(feature_info=feature_info)
 
-    def forward(self, x: torch.Tensor) -> list[torch.Tensor]:
-        """Extract multi-scale features from the MobileNetV3 backbone.
+        # Assign components as submodules after super().__init__.
+        self.features: nn.Sequential = model.features
+        self._extract_indices = _extract_indices
 
-        Runs the input through ``features`` Sequential and collects the
-        output at each target index.
+    @staticmethod
+    def _infer_channels_static(
+        features: nn.Sequential,
+        extract_indices: list[int],
+    ) -> list[int]:
+        """Infer output channel counts via a dummy forward pass.
 
         Args:
-            x: Input tensor of shape ``(B, 3, H, W)``.
+            features: The MobileNetV3 features sequential module.
+            extract_indices: Block indices at which to extract features.
 
         Returns:
-            A list of four feature tensors at strides 4, 8, 16, and 32,
-            ordered from finest to coarsest spatial resolution.
+            List of channel counts at each extraction point.
         """
-        target_indices: Sequence[int] = sorted(self._feature_indices.values())
-        features: list[torch.Tensor] = []
-        target_set: set[int] = set(target_indices)
+        dummy = torch.randn(1, 3, 224, 224)
+        channels: list[int] = []
+        x = dummy
+        for idx, block in enumerate(features):
+            x = block(x)
+            if idx in extract_indices:
+                channels.append(x.shape[1])
+        return channels
 
-        for i, layer in enumerate(self._model.features):
-            x = layer(x)
-            if i in target_set:
+    def forward(self, x: Tensor) -> tuple[list[Tensor], FeatureInfo]:
+        """Extract multi-scale features from the input tensor.
+
+        Args:
+            x: Input image tensor of shape ``(B, 3, H, W)``.
+
+        Returns:
+            Tuple of ``(features, feature_info)`` where *features* is a
+            list of feature tensors and *feature_info* contains metadata.
+        """
+        features: list[Tensor] = []
+        for idx, block in enumerate(self.features):
+            x = block(x)
+            if idx in self._extract_indices:
                 features.append(x)
 
-        return features
+        return features, self.feature_info
 
 
-@register_backbone("mobilenet_v3_small")
-class MobileNetV3SmallBackbone(_MobileNetV3Backbone):
-    """MobileNetV3-Small backbone with four-level feature extraction.
+# ---------------------------------------------------------------------------
+# Sanity check
+# ---------------------------------------------------------------------------
 
-    Wraps :func:`torchvision.models.mobilenet_v3_small`.  Feature maps are
-    extracted from ``features`` Sequential at indices 1, 3, 8, and 12,
-    corresponding to strides 4, 8, 16, and 32 respectively.
+if __name__ == "__main__":
+    torch.manual_seed(42)
 
-    Feature levels:
-        - ``stride4``: 16 channels, 56x56 spatial (index 1)
-        - ``stride8``: 24 channels, 28x28 spatial (index 3)
-        - ``stride16``: 48 channels, 14x14 spatial (index 8)
-        - ``stride32``: 576 channels, 7x7 spatial (index 12)
-    """
+    for variant in ("mobilenetv3_large", "mobilenetv3_small"):
+        backbone = MobileNetV3Backbone(variant=variant, pretrained=False)
+        backbone.eval()
 
-    _model_factory = staticmethod(mobilenet_v3_small)
-    _weights_enum = MobileNet_V3_Small_Weights
-    _feature_indices: dict[str, int] = {
-        "stride4": 1,
-        "stride8": 3,
-        "stride16": 8,
-        "stride32": 12,
-    }
-    _feature_channels: dict[str, int] = {
-        "stride4": 16,
-        "stride8": 24,
-        "stride16": 48,
-        "stride32": 576,
-    }
+        dummy_input = torch.randn(1, 3, 224, 224)
+        with torch.no_grad():
+            features, info = backbone(dummy_input)
 
+        print(f"--- {variant} ---")  # noqa: T201
+        for i, (feat, ch, stride) in enumerate(
+            zip(features, info.channels, info.strides, strict=True),
+        ):
+            print(  # noqa: T201
+                f"  Level {i} ({info.names[i]}): "
+                f"channels={ch}, stride={stride}, "
+                f"shape={feat.shape}",
+            )
 
-@register_backbone("mobilenet_v3_large")
-class MobileNetV3LargeBackbone(_MobileNetV3Backbone):
-    """MobileNetV3-Large backbone with four-level feature extraction.
-
-    Wraps :func:`torchvision.models.mobilenet_v3_large`.  Feature maps are
-    extracted from ``features`` Sequential at indices 3, 6, 12, and 16,
-    corresponding to strides 4, 8, 16, and 32 respectively.
-
-    Feature levels:
-        - ``stride4``: 24 channels, 56x56 spatial (index 3)
-        - ``stride8``: 40 channels, 28x28 spatial (index 6)
-        - ``stride16``: 112 channels, 14x14 spatial (index 12)
-        - ``stride32``: 960 channels, 7x7 spatial (index 16)
-    """
-
-    _model_factory = staticmethod(mobilenet_v3_large)
-    _weights_enum = MobileNet_V3_Large_Weights
-    _feature_indices: dict[str, int] = {
-        "stride4": 3,
-        "stride8": 6,
-        "stride16": 12,
-        "stride32": 16,
-    }
-    _feature_channels: dict[str, int] = {
-        "stride4": 24,
-        "stride8": 40,
-        "stride16": 112,
-        "stride32": 960,
-    }
+        assert [f.shape[1] for f in features] == info.channels, "Channel mismatch!"  # noqa: S101
+    print("\nAll MobileNetV3 backbone tests passed.")  # noqa: T201

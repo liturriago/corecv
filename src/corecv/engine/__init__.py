@@ -1,19 +1,19 @@
-"""Engine module for CoreCV.
+"""CoreCV Engine Module.
 
-Provides graph rewriting, validation, training, inference, and model export
-engines for edge hardware compatibility and unified deployment pipeline.
+Provides training engines for classification, segmentation, and detection
+tasks with full GPU-native metric computation and history tracking.
 """
 
-from corecv.engine.exporter import CoreExporter
-from corecv.engine.predictor import CorePredictor
-from corecv.engine.rewriter import TargetRewriter
-from corecv.engine.trainer import CoreTrainer
-from corecv.engine.validator import MetaProber
+from __future__ import annotations
+
+from corecv.engine.train import (
+    ClassificationTrainer,
+    DetectionTrainer,
+    SegmentationTrainer,
+)
 
 __all__ = [
-    "CoreExporter",
-    "CorePredictor",
-    "CoreTrainer",
-    "MetaProber",
-    "TargetRewriter",
+    "ClassificationTrainer",
+    "DetectionTrainer",
+    "SegmentationTrainer",
 ]

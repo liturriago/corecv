@@ -1,42 +1,22 @@
-"""Neck modules for CoreCV.
+"""Necks subpackage for CoreCV.
 
-Provides feature-pyramid necks that sit between a :class:`BaseBackbone`
-and task-specific heads.  All necks consume
-:class:`~corecv.core.contract.FeatureInfo` metadata and dynamically
-construct their internal convolutions to be backbone-agnostic.
+This subpackage contains feature fusion modules (necks) that combine
+multi-scale features from backbones before passing them to task-specific
+heads. Supported architectures:
 
-Available necks
----------------
-
-.. list-table::
-   :header-rows: 1
-   :widths: 20 25 55
-
-   * - Class
-     - Registry Key
-     - Description
-   * - :class:`FPN`
-     - ``fpn``
-     - Feature Pyramid Network (Lin et al., 2017) -- top-down pathway
-       with lateral connections.
-   * - :class:`PANet`
-     - ``panet``
-     - Path Aggregation Network (Liu et al., 2018) -- FPN plus
-       bottom-up path augmentation.
-
-Example:
-    >>> from corecv.models.backbones.resnet import ResNet50Backbone
-    >>> from corecv.models.necks import FPN
-    >>> backbone = ResNet50Backbone(pretrained=False)
-    >>> neck = FPN(feature_info=backbone.feature_info, out_channels=256)
-    >>> features = backbone(torch.randn(1, 3, 224, 224))
-    >>> pyramid = neck(features)
+- **FPN**: Feature Pyramid Network for top-down feature fusion.
+- **PANet**: Path Aggregation Network with bottom-up augmentation.
+- **BiFPN**: Bidirectional Feature Pyramid Network with weighted fusion.
 """
 
+from __future__ import annotations
+
+from corecv.models.necks.bifpn import BiFPN
 from corecv.models.necks.fpn import FPN
 from corecv.models.necks.panet import PANet
 
 __all__ = [
     "FPN",
+    "BiFPN",
     "PANet",
 ]
