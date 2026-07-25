@@ -190,9 +190,22 @@ class AnchorFreeDetectionHead(nn.Module):
 
             # Reshape: (B, C, H, W) -> (B, H*W, C)
             o2m_logits_parts.append(o2m_cls.flatten(start_dim=2).permute(0, 2, 1))
-            o2m_boxes_parts.append(o2m_reg.flatten(start_dim=2).permute(0, 2, 1))
             o2o_logits_parts.append(o2o_cls.flatten(start_dim=2).permute(0, 2, 1))
-            o2o_boxes_parts.append(o2o_reg.flatten(start_dim=2).permute(0, 2, 1))
+
+            # Box predictions: flatten + permute to (B, H*W, 4), then sort corners
+            # to guarantee x1 <= x2 and y1 <= y2 (required by box_iou / CIoU).
+            # Without this, sigmoid outputs can have x2 < x1 → area=0 → NaN loss.
+            o2m_reg_flat = o2m_reg.flatten(start_dim=2).permute(0, 2, 1)
+            o2m_boxes_parts.append(torch.cat([
+                torch.min(o2m_reg_flat[..., :2], o2m_reg_flat[..., 2:]),
+                torch.max(o2m_reg_flat[..., :2], o2m_reg_flat[..., 2:]),
+            ], dim=-1))
+
+            o2o_reg_flat = o2o_reg.flatten(start_dim=2).permute(0, 2, 1)
+            o2o_boxes_parts.append(torch.cat([
+                torch.min(o2o_reg_flat[..., :2], o2o_reg_flat[..., 2:]),
+                torch.max(o2o_reg_flat[..., :2], o2o_reg_flat[..., 2:]),
+            ], dim=-1))
 
         # Concatenate across all feature levels
         pred_logits_o2m = torch.cat(o2m_logits_parts, dim=1)

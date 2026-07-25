@@ -431,9 +431,9 @@ class DualHeadDetectionLoss(nn.Module):
         )
 
         return {
-            "loss_total": loss_total.squeeze(0),
-            "loss_cls_o2m": loss_cls_o2m_acc.squeeze(0),
-            "loss_box_o2m": loss_box_o2m_acc.squeeze(0),
-            "loss_cls_o2o": loss_cls_o2o_acc.squeeze(0),
-            "loss_box_o2o": loss_box_o2o_acc.squeeze(0),
+            "loss_total": loss_total.squeeze(),
+            "loss_cls_o2m": loss_cls_o2m_acc.squeeze(),
+            "loss_box_o2m": loss_box_o2m_acc.squeeze(),
+            "loss_cls_o2o": loss_cls_o2o_acc.squeeze(),
+            "loss_box_o2o": loss_box_o2o_acc.squeeze(),
         }
