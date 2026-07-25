@@ -1,6 +1,6 @@
 """CoreCV: Production-ready Computer Vision Library."""
 
-__version__ = "0.2.2"
+__version__ = "0.2.3"
 
 from corecv import data, engine, losses, metrics, models
 
