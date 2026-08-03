@@ -12,12 +12,7 @@ heads:
 from __future__ import annotations
 
 from corecv.models.heads.classification import ClassificationHead
-from corecv.models.heads.detection import AnchorFreeDetectionHead
-from corecv.models.heads.segmentation import DeepLabV3PlusHead, ResUNetDecoder
 
 __all__ = [
-    "AnchorFreeDetectionHead",
     "ClassificationHead",
-    "DeepLabV3PlusHead",
-    "ResUNetDecoder",
 ]

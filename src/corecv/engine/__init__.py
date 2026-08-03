@@ -11,17 +11,11 @@ from corecv.engine.evaluation import (
     DetectionEvaluator,
     SegmentationEvaluator,
 )
-from corecv.engine.train import (
-    ClassificationTrainer,
-    DetectionTrainer,
-    SegmentationTrainer,
-)
+from corecv.engine.train import Trainer
 
 __all__ = [
     "ClassificationEvaluator",
-    "ClassificationTrainer",
     "DetectionEvaluator",
-    "DetectionTrainer",
     "SegmentationEvaluator",
-    "SegmentationTrainer",
+    "Trainer",
 ]

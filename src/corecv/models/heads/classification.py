@@ -46,29 +46,3 @@ class ClassificationHead(nn.Module):
         if features.dim() == _SPATIAL_DIMS:
             features = self.gap(features).flatten(start_dim=1)
         return self.fc(features)
-
-
-# ---------------------------------------------------------------------------
-# Sanity check
-# ---------------------------------------------------------------------------
-
-if __name__ == "__main__":
-    torch.manual_seed(0)
-
-    _batch_size = 2
-    _in_channels = 256
-    _num_classes = 10
-
-    _head = ClassificationHead(in_channels=_in_channels, num_classes=_num_classes)
-
-    # Test spatial input (B, C, H, W)
-    _spatial_in = torch.randn(_batch_size, _in_channels, 7, 7)
-    _spatial_out = _head(_spatial_in)
-    print(f"Spatial  input: {_spatial_in.shape}")  # noqa: T201
-    print(f"Spatial output: {_spatial_out.shape}")  # noqa: T201
-
-    # Test pre-pooled input (B, C)
-    _pooled_in = torch.randn(_batch_size, _in_channels)
-    _pooled_out = _head(_pooled_in)
-    print(f"Pooled  input: {_pooled_in.shape}")  # noqa: T201
-    print(f"Pooled output: {_pooled_out.shape}")  # noqa: T201

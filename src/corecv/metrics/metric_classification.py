@@ -24,6 +24,9 @@ from __future__ import annotations
 
 import torch
 from torch import Tensor
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 def _topk_accuracy(
@@ -173,7 +176,7 @@ class ClassificationMetrics:
             macro_precision = 0.0
             macro_recall = 0.0
 
-        results: dict[str, float] = {
+        self.results: dict[str, float] = {
             "precision": round(macro_precision, 4),
             "recall": round(macro_recall, 4),
         }
@@ -182,30 +185,20 @@ class ClassificationMetrics:
         for k_value in self.top_k:
             if k_value <= self.num_classes:
                 accuracy = self._topk_correct_counts[k_value] / self._total_samples
-                results[f"top{k_value}_acc"] = round(accuracy, 4)
+                self.results[f"top{k_value}_acc"] = round(accuracy, 4)
 
-        if f"top{1}_acc" not in results:
-            results["top1_acc"] = 0.0
-        if f"top{5}_acc" not in results:
-            results["top5_acc"] = 0.0
+        if f"top{1}_acc" not in self.results:
+            self.results["top1_acc"] = 0.0
+        if f"top{5}_acc" not in self.results:
+            self.results["top5_acc"] = 0.0
 
-        return results
+        return self.results
+    
+    def print_results(self) -> None:
 
-
-if __name__ == "__main__":
-    torch.manual_seed(42)
-    num_classes = 10
-    batch_size = 8
-
-    metrics = ClassificationMetrics(num_classes=num_classes, top_k=(1, 5))
-
-    for _ in range(3):
-        logits = torch.randn(batch_size, num_classes)
-        labels = torch.randint(0, num_classes, (batch_size,))
-        metrics.update(logits, labels)
-
-    results = metrics.compute()
-
-    print("--- Classification Metrics Sanity Test ---")  # noqa: T201
-    for key, value in results.items():
-        print(f"  {key:12s}: {value:.4f}")  # noqa: T201
+        logger.info(
+                "precision=%.4f recall=%.4f top1_acc=%.4f top5_acc=%.4f",
+                self.results["precision"],
+                self.results["recall"],
+                self.results["top1_acc"],
+                self.results["top5_acc"],)

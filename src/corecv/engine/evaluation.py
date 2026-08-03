@@ -31,10 +31,10 @@ from torch.utils.data import DataLoader
 from torchvision.ops import box_iou
 
 from corecv.engine.train import _batch_to_device
-from corecv.losses.loss_detection import DualHeadDetectionLoss
+# from corecv.losses.loss_detection import DualHeadDetectionLoss
 from corecv.metrics.metric_classification import ClassificationMetrics
-from corecv.metrics.metric_detection import DetectionMetrics
-from corecv.metrics.metric_segmentation import SegmentationMetrics
+# from corecv.metrics.metric_detection import DetectionMetrics
+# from corecv.metrics.metric_segmentation import SegmentationMetrics
 
 if TYPE_CHECKING:
     from pathlib import Path

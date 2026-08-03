@@ -46,3 +46,5 @@ site/
 # Local checkpoints & exports
 checkpoints/
 exports/
+
+evaluation.py

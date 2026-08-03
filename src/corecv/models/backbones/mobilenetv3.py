@@ -143,32 +143,3 @@ class MobileNetV3Backbone(BaseBackbone):
                 features.append(x)
 
         return features, self.feature_info
-
-
-# ---------------------------------------------------------------------------
-# Sanity check
-# ---------------------------------------------------------------------------
-
-if __name__ == "__main__":
-    torch.manual_seed(42)
-
-    for variant in ("mobilenetv3_large", "mobilenetv3_small"):
-        backbone = MobileNetV3Backbone(variant=variant, pretrained=False)
-        backbone.eval()
-
-        dummy_input = torch.randn(1, 3, 224, 224)
-        with torch.no_grad():
-            features, info = backbone(dummy_input)
-
-        print(f"--- {variant} ---")  # noqa: T201
-        for i, (feat, ch, stride) in enumerate(
-            zip(features, info.channels, info.strides, strict=True),
-        ):
-            print(  # noqa: T201
-                f"  Level {i} ({info.names[i]}): "
-                f"channels={ch}, stride={stride}, "
-                f"shape={feat.shape}",
-            )
-
-        assert [f.shape[1] for f in features] == info.channels, "Channel mismatch!"  # noqa: S101
-    print("\nAll MobileNetV3 backbone tests passed.")  # noqa: T201

@@ -24,37 +24,23 @@ from corecv.models.backbones import (
     SwinTransformerBackbone,
     create_backbone,
 )
-from corecv.models.heads import (
-    AnchorFreeDetectionHead,
-    ClassificationHead,
-    DeepLabV3PlusHead,
-    ResUNetDecoder,
-)
+from corecv.models.heads import ClassificationHead
 from corecv.models.model_classification import ClassificationModel, create_classification_model
-from corecv.models.model_detection import DetectionModel, create_detection_model
-from corecv.models.model_segmentation import SegmentationModel, create_segmentation_model
 from corecv.models.necks import FPN, BiFPN, PANet
 
 __all__ = [
     "FPN",
-    "AnchorFreeDetectionHead",
     "BackboneName",
     "BaseBackbone",
     "BiFPN",
     "ClassificationHead",
     "ClassificationModel",
     "ConvNeXtBackbone",
-    "DeepLabV3PlusHead",
-    "DetectionModel",
     "FeatureInfo",
     "MobileNetV3Backbone",
     "PANet",
     "ResNetBackbone",
-    "ResUNetDecoder",
-    "SegmentationModel",
     "SwinTransformerBackbone",
     "create_backbone",
     "create_classification_model",
-    "create_detection_model",
-    "create_segmentation_model",
 ]
