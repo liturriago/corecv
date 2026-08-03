@@ -23,7 +23,7 @@ class ClassificationDataset(Dataset):
     def __init__(
         self,
         img_dir: str | Path,
-        ann_source: str | Path,
+        ann_source: str | Path | None,
         label_format: LabelFormat,
         img_size: tuple[int, int] = (224, 224),
         augment: bool = True,
@@ -43,7 +43,7 @@ class ClassificationDataset(Dataset):
         """
         super().__init__()
         self.img_dir = Path(img_dir)
-        self.ann_source = Path(ann_source)
+        self.ann_source = Path(ann_source) if ann_source is not None else None
         self.label_format = label_format.lower()
         self.img_size = img_size
         self.augment = augment
@@ -225,7 +225,7 @@ def classification_collate_fn(batch: list[dict[str, torch.Tensor]]) -> dict[str,
 
 def create_classification_dataloader(
     img_dir: str | Path,
-    ann_source: str | Path,
+    ann_source: str | Path | None,
     label_format: LabelFormat,
     batch_size: int = 16,
     img_size: tuple[int, int] = (224, 224),
