@@ -26,19 +26,8 @@ from torch import Tensor, nn
 
 from corecv.models.backbones import BackboneName, create_backbone
 from corecv.models.heads.classification import ClassificationHead
-from corecv.models.necks.bifpn import BiFPN
-from corecv.models.necks.fpn import FPN
-from corecv.models.necks.panet import PANet
+from corecv.models.necks import NeckName, create_neck
 
-# Type alias for neck options.
-NeckName = Literal["fpn", "panet", "bifpn"]
-
-# Maps neck name to neck class.
-_NECK_BUILDERS: dict[str, type] = {
-    "fpn": FPN,
-    "panet": PANet,
-    "bifpn": BiFPN,
-}
 
 
 class ClassificationModel(nn.Module):
@@ -153,12 +142,8 @@ def create_classification_model(
     head_in_channels: int = feature_info.channels[0]
 
     if neck is not None:
-        if neck not in _NECK_BUILDERS:
-            msg = f"Unknown neck: {neck!r}. Choose from {list(_NECK_BUILDERS)}"
-            raise ValueError(msg)
-
-        neck_cls = _NECK_BUILDERS[neck]
-        neck_module = neck_cls(
+        neck_module = create_neck(
+            name=neck,
             in_channels=feature_info.channels,
             out_channels=neck_out_channels,
         )
