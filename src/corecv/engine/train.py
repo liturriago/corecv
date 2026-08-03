@@ -237,4 +237,16 @@ class Trainer:
             self._train_metrics.print_results()
             self._val_metrics.print_results()
 
+        self.cleanup()
         return dict(history)
+
+    def cleanup(self) -> None:
+        """Free GPU VRAM by moving the model to CPU and clearing PyTorch cache."""
+        logger.info("Cleaning up GPU VRAM...")
+        if hasattr(self, "model"):
+            self.model.to("cpu")
+        import gc
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        logger.info("GPU VRAM cleared.")
