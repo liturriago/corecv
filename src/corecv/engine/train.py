@@ -190,7 +190,7 @@ class Trainer:
                 images = batch["images"]
                 labels = batch["labels"]
 
-                with torch.cuda.amp.autocast(enabled=self.use_amp):
+                with autocast(device_type=self.device.type, enabled=self.use_amp):
                     logits = self.model(images)
                     loss = self.loss_fn(logits, labels)
 
