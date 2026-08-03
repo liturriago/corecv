@@ -234,8 +234,8 @@ class Trainer:
                 val_metrics["loss"],
             )
 
-            self._train_metrics.print_results()
-            self._val_metrics.print_results()
+            self._train_metrics.print_results("Train")
+            self._val_metrics.print_results("Val")
 
         self.cleanup()
         return dict(history)

@@ -194,10 +194,19 @@ class ClassificationMetrics:
 
         return self.results
     
-    def print_results(self) -> None:
+    def print_results(self, stage: str) -> None:
+        """Print the evaluation results for a given stage.
+
+        Args:
+            stage: Name of the stage (train, val, test).
+        
+        Returns:
+            None
+        """
 
         logger.info(
-                "precision=%.4f recall=%.4f top1_acc=%.4f top5_acc=%.4f",
+                "%s | precision=%.4f recall=%.4f top1_acc=%.4f top5_acc=%.4f",
+                stage,
                 self.results["precision"],
                 self.results["recall"],
                 self.results["top1_acc"],
