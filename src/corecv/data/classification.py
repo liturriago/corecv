@@ -2,6 +2,7 @@
 
 import csv
 import json
+import logging
 from pathlib import Path
 from typing import Any, Literal
 
@@ -10,6 +11,8 @@ import cv2
 import torch
 from albumentations.pytorch import ToTensorV2
 from torch.utils.data import DataLoader, Dataset
+
+logger = logging.getLogger(__name__)
 
 LabelFormat = Literal["folder", "csv", "json"]
 
@@ -139,10 +142,8 @@ class ClassificationDataset(Dataset):
 
         for row in rows:
             filename = row[img_col]
-            label = class_to_idx[row[label_col]]
             img_path = self.img_dir / filename
-            if img_path.suffix.lower() in valid_exts:
-                self.samples.append((img_path, label))
+            self._add_valid_sample(img_path, class_to_idx[row[label_col]], valid_exts, "CSV")
 
     def _load_from_json(self, valid_exts: set) -> None:
         if not self.ann_source.is_file():
@@ -161,9 +162,22 @@ class ClassificationDataset(Dataset):
         label_to_idx = {lbl: idx for idx, lbl in enumerate(all_labels)}
 
         for filename, label in data.items():
-            img_path = self.img_dir / filename
-            if img_path.suffix.lower() in valid_exts:
-                self.samples.append((img_path, label_to_idx[label]))
+            self._add_valid_sample(self.img_dir / filename, label_to_idx[label], valid_exts, "JSON")
+
+    def _add_valid_sample(
+        self,
+        img_path: Path,
+        label: int,
+        valid_exts: set,
+        source: str,
+    ) -> None:
+        """Append a sample if the image exists and has a supported extension."""
+        if img_path.suffix.lower() not in valid_exts:
+            return
+        if not img_path.is_file():
+            logger.warning("Skipping missing image referenced in %s: %s", source, img_path)
+            return
+        self.samples.append((img_path, label))
 
     def _build_transforms(
         self, mean: tuple[float, float, float], std: tuple[float, float, float]
@@ -196,7 +210,21 @@ class ClassificationDataset(Dataset):
         return len(self.samples)
 
     def __getitem__(self, idx: int) -> dict[str, torch.Tensor]:
-        """Load and return the image and label at the given index."""
+        """Load and return the image, label, and index at the given position.
+
+        Returns:
+            A dict with ``"images"`` (transformed image tensor of shape
+            ``(C, H, W)``), ``"labels"`` (scalar class index), and
+            ``"image_ids"`` (scalar dataset index of this sample).
+
+        Note:
+            ``"image_ids"`` is the dataset index ``idx``, i.e. the position of
+            the sample in :attr:`samples`. It is stable across epochs and
+            dataloader workers because DataLoader always calls ``__getitem__``
+            with dataset indices; use it to correlate predictions back to
+            :attr:`samples`.
+
+        """
         img_path, label = self.samples[idx]
 
         image = cv2.imread(str(img_path))
@@ -208,17 +236,17 @@ class ClassificationDataset(Dataset):
         transformed = self.transform(image=image)
 
         return {
-            "image": transformed["image"],
-            "label": torch.tensor(label, dtype=torch.long),
-            "image_id": torch.tensor([idx]),
+            "images": transformed["image"],
+            "labels": torch.tensor(label, dtype=torch.long),
+            "image_ids": torch.tensor(idx),
         }
 
 
 def classification_collate_fn(batch: list[dict[str, torch.Tensor]]) -> dict[str, Any]:
     """Collate a list of classification samples into a batched dictionary."""
-    images = torch.stack([item["image"] for item in batch], dim=0)
-    labels = torch.stack([item["label"] for item in batch], dim=0)
-    image_ids = torch.cat([item["image_id"] for item in batch], dim=0)
+    images = torch.stack([item["images"] for item in batch], dim=0)
+    labels = torch.stack([item["labels"] for item in batch], dim=0)
+    image_ids = torch.stack([item["image_ids"] for item in batch], dim=0)
 
     return {"images": images, "labels": labels, "image_ids": image_ids}
 
@@ -231,6 +259,9 @@ def create_classification_dataloader(
     img_size: tuple[int, int] = (224, 224),
     augment: bool = True,
     num_workers: int = 4,
+    *,
+    shuffle: bool | None = None,
+    pin_memory: bool = True,
 ) -> DataLoader:
     """Create a DataLoader for image classification.
 
@@ -242,6 +273,11 @@ def create_classification_dataloader(
         img_size: Target (height, width) for resizing.
         augment: Whether to apply data augmentation.
         num_workers: Number of subprocesses for data loading.
+        shuffle: Whether to shuffle samples each epoch. When ``None``
+            (default), defaults to *augment* (i.e. shuffled for training,
+            ordered for evaluation). Pass ``shuffle=False`` explicitly for an
+            ordered evaluation dataloader that still uses augmentation.
+        pin_memory: Whether to pin batch memory for faster GPU transfers.
 
     Returns:
         A PyTorch DataLoader for classification.
@@ -254,11 +290,14 @@ def create_classification_dataloader(
         augment=augment,
     )
 
+    if shuffle is None:
+        shuffle = augment
+
     return DataLoader(
         dataset,
         batch_size=batch_size,
-        shuffle=augment,
+        shuffle=shuffle,
         num_workers=num_workers,
         collate_fn=classification_collate_fn,
-        pin_memory=True,
+        pin_memory=pin_memory,
     )

@@ -11,7 +11,7 @@ Supported backbones:
 
 Typical usage::
 
-    from corecv.models.model_classification import create_classification_model
+    from corecv.models.classification import create_classification_model
 
     model = create_classification_model("resnet50", num_classes=1000, pretrained=True)
     logits = model(images)  # (B, 1000)
@@ -52,7 +52,7 @@ class ClassificationModel(nn.Module):
 
     Example:
         >>> import torch
-        >>> from corecv.models.model_classification import create_classification_model
+        >>> from corecv.models.classification import create_classification_model
         >>> model = create_classification_model("resnet50", num_classes=10)
         >>> x = torch.randn(2, 3, 224, 224)
         >>> logits = model(x)

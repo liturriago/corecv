@@ -28,6 +28,9 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+_LOGITS_NDIM = 2
+_LABELS_NDIM = 1
+
 
 def _topk_accuracy(
     logits: Tensor,
@@ -103,6 +106,7 @@ class ClassificationMetrics:
         )
         self._topk_correct_counts: dict[int, int] = dict.fromkeys(top_k, 0)
         self._total_samples: int = 0
+        self.results: dict[str, float] = {}
 
     def update(self, logits: Tensor, labels: Tensor) -> None:
         """Update metric state with a new batch of predictions and ground truths.
@@ -110,7 +114,31 @@ class ClassificationMetrics:
         Args:
             logits: Model output logits of shape ``(B, C)``.
             labels: Ground-truth class indices of shape ``(B,)`` with dtype ``torch.long``.
+
+        Raises:
+            ValueError: If *logits* is not 2D with ``C == num_classes``, or if
+                *labels* is not 1D with the same batch size as *logits*.
+
         """
+        if logits.ndim != _LOGITS_NDIM:
+            msg = f"logits must be 2D with shape (B, C), got shape {tuple(logits.shape)}"
+            raise ValueError(msg)
+        if logits.shape[1] != self.num_classes:
+            msg = (
+                f"logits has {logits.shape[1]} classes but ClassificationMetrics "
+                f"was initialized with num_classes={self.num_classes}"
+            )
+            raise ValueError(msg)
+        if labels.ndim != _LABELS_NDIM:
+            msg = f"labels must be 1D with shape (B,), got shape {tuple(labels.shape)}"
+            raise ValueError(msg)
+        if labels.shape[0] != logits.shape[0]:
+            msg = (
+                f"labels batch size {labels.shape[0]} does not match "
+                f"logits batch size {logits.shape[0]}"
+            )
+            raise ValueError(msg)
+
         # Compute predictions on the original device (GPU) to avoid PCIe bottleneck
         preds = logits.detach().argmax(dim=1).long()
         labels_long = labels.detach().long()
@@ -137,6 +165,7 @@ class ClassificationMetrics:
         self._confusion_matrix.zero_()
         self._topk_correct_counts = dict.fromkeys(self.top_k, 0)
         self._total_samples = 0
+        self.results = {}
 
     def compute(self) -> dict[str, float]:
         """Compute evaluation metrics over all accumulated data.
@@ -199,15 +228,20 @@ class ClassificationMetrics:
 
         Args:
             stage: Name of the stage (train, val, test).
-        
-        Returns:
-            None
+
+        Raises:
+            RuntimeError: If :meth:`compute` has not been called yet.
+
         """
+        if not self.results:
+            msg = "No results available. Call compute() before print_results()."
+            raise RuntimeError(msg)
 
         logger.info(
-                "%s | precision=%.4f recall=%.4f top1_acc=%.4f top5_acc=%.4f",
-                stage,
-                self.results["precision"],
-                self.results["recall"],
-                self.results["top1_acc"],
-                self.results["top5_acc"],)
+            "%s | precision=%.4f recall=%.4f top1_acc=%.4f top5_acc=%.4f",
+            stage,
+            self.results["precision"],
+            self.results["recall"],
+            self.results["top1_acc"],
+            self.results["top5_acc"],
+        )
