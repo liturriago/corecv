@@ -28,11 +28,12 @@ class SegmentationDataset(Dataset):
     def __init__(
         self,
         img_dir: str | Path,
-        mask_dir: str | Path | None,
-        ann_source: str | Path | None,
         label_format: LabelFormat,
+        mask_dir: str | Path | None = None,
+        ann_source: str | Path | None = None,
         img_size: tuple[int, int] = (512, 512),
         augment: bool = True,
+        mask_suffix: str = "",
         mean: tuple[float, float, float] = (0.485, 0.456, 0.406),
         std: tuple[float, float, float] = (0.229, 0.224, 0.225),
     ) -> None:
@@ -40,14 +41,20 @@ class SegmentationDataset(Dataset):
 
         Args:
             img_dir: Directory containing images.
-            mask_dir: Directory containing masks. Required for the ``folder``
-                format; optional base directory for relative mask paths in the
-                ``csv``/``json`` formats (falls back to *img_dir*).
-            ann_source: Annotation source (CSV or JSON file). Required for the
-                ``csv``/``json`` formats.
             label_format: One of 'folder', 'csv', or 'json'.
+            mask_dir: Directory containing masks. When ``None`` (default),
+                defaults to *img_dir* (masks live alongside the images).
+                Also used as the base directory for relative mask paths in
+                the ``csv``/``json`` formats.
+            ann_source: Annotation source (CSV or JSON file). Required for
+                the ``csv``/``json`` formats.
             img_size: Target (height, width) for resizing.
             augment: Whether to apply data augmentation.
+            mask_suffix: Optional suffix appended to an image's stem to form
+                its mask filename in the ``folder`` format (e.g. ``_mask``
+                maps ``cat.jpg`` to ``cat_mask.png``). Files whose stem ends
+                with this suffix are treated as masks and excluded from the
+                image list.
             mean: Per-channel mean for image normalization.
             std: Per-channel std for image normalization.
         """
@@ -58,6 +65,7 @@ class SegmentationDataset(Dataset):
         self.label_format = label_format.lower()
         self.img_size = img_size
         self.augment = augment
+        self.mask_suffix = mask_suffix
 
         self.samples: list[tuple[Path, Path]] = []
 
@@ -83,15 +91,13 @@ class SegmentationDataset(Dataset):
             raise ValueError(msg)
 
     def _load_from_folder(self, valid_exts: set) -> None:
-        if self.mask_dir is None:
-            msg = "mask_dir is required when label_format='folder'"
-            raise ValueError(msg)
-
         images = sorted(
             [
                 f
                 for f in self.img_dir.iterdir()
-                if f.is_file() and f.suffix.lower() in valid_exts
+                if f.is_file()
+                and f.suffix.lower() in valid_exts
+                and not self._is_mask_file(f)
             ]
         )
 
@@ -106,10 +112,15 @@ class SegmentationDataset(Dataset):
                 continue
             self.samples.append((img_path, mask_path))
 
+    def _is_mask_file(self, path: Path) -> bool:
+        """Return whether a file is a mask (its stem ends with the suffix)."""
+        return bool(self.mask_suffix) and path.stem.endswith(self.mask_suffix)
+
     def _find_mask(self, img_path: Path) -> Path | None:
         """Locate the mask for an image by matching its stem in mask_dir."""
+        mask_dir = self.mask_dir or self.img_dir
         for ext in (".png", ".jpg", ".jpeg", ".bmp", ".webp"):
-            candidate = self.mask_dir / (img_path.stem + ext)
+            candidate = mask_dir / (img_path.stem + self.mask_suffix + ext)
             if candidate.is_file():
                 return candidate
         return None
@@ -293,14 +304,15 @@ def segmentation_collate_fn(batch: list[dict[str, torch.Tensor]]) -> dict[str, A
 
 def create_segmentation_dataloader(
     img_dir: str | Path,
-    mask_dir: str | Path | None,
-    ann_source: str | Path | None,
     label_format: LabelFormat,
+    mask_dir: str | Path | None = None,
+    ann_source: str | Path | None = None,
     batch_size: int = 8,
     img_size: tuple[int, int] = (512, 512),
     augment: bool = True,
     num_workers: int = 4,
     *,
+    mask_suffix: str = "",
     shuffle: bool | None = None,
     pin_memory: bool = True,
 ) -> DataLoader:
@@ -308,15 +320,17 @@ def create_segmentation_dataloader(
 
     Args:
         img_dir: Directory containing images.
-        mask_dir: Directory containing masks. Required for the ``folder``
-            format; optional base directory for relative mask paths in the
-            ``csv``/``json`` formats (falls back to *img_dir*).
-        ann_source: Annotation source path (CSV or JSON).
         label_format: One of 'folder', 'csv', or 'json'.
+        mask_dir: Directory containing masks. When ``None`` (default),
+            defaults to *img_dir* (masks live alongside the images).
+        ann_source: Annotation source path (CSV or JSON).
         batch_size: Number of samples per batch.
         img_size: Target (height, width) for resizing.
         augment: Whether to apply data augmentation.
         num_workers: Number of subprocesses for data loading.
+        mask_suffix: Optional suffix appended to an image's stem to form its
+            mask filename in the ``folder`` format (e.g. ``_mask`` maps
+            ``cat.jpg`` to ``cat_mask.png``).
         shuffle: Whether to shuffle samples each epoch. When ``None``
             (default), defaults to *augment* (i.e. shuffled for training,
             ordered for evaluation). Pass ``shuffle=False`` explicitly for an
@@ -328,11 +342,12 @@ def create_segmentation_dataloader(
     """
     dataset = SegmentationDataset(
         img_dir=img_dir,
+        label_format=label_format,
         mask_dir=mask_dir,
         ann_source=ann_source,
-        label_format=label_format,
         img_size=img_size,
         augment=augment,
+        mask_suffix=mask_suffix,
     )
 
     if shuffle is None:
