@@ -8,6 +8,8 @@ and necks. Supported architectures:
 - **MobileNetV3**: Lightweight mobile-friendly backbones.
 - **ConvNeXt**: Modernized ConvNet architectures.
 - **Swin Transformer**: Hierarchical vision transformer.
+- **CSP Pyramid**: From-scratch hierarchical CNN with CSP blocks, spatial
+  pyramid pooling, and positional self-attention.
 """
 
 from __future__ import annotations
@@ -16,6 +18,7 @@ from typing import Literal
 
 from corecv.models.backbones.base import BaseBackbone, FeatureInfo
 from corecv.models.backbones.convnext import ConvNeXtBackbone
+from corecv.models.backbones.csp_pyramid import CSPPyramidBackbone
 from corecv.models.backbones.mobilenetv3 import MobileNetV3Backbone
 from corecv.models.backbones.resnet import ResNetBackbone
 from corecv.models.backbones.swin import SwinTransformerBackbone
@@ -35,6 +38,11 @@ BackboneName = Literal[
     "swin_t",
     "swin_s",
     "swin_b",
+    "csp_nano",
+    "csp_small",
+    "csp_medium",
+    "csp_large",
+    "csp_xlarge",
 ]
 
 # Registry mapping variant name -> backbone class.
@@ -52,6 +60,11 @@ _BACKBONE_REGISTRY: dict[str, type[BaseBackbone]] = {
     "swin_t": SwinTransformerBackbone,
     "swin_s": SwinTransformerBackbone,
     "swin_b": SwinTransformerBackbone,
+    "csp_nano": CSPPyramidBackbone,
+    "csp_small": CSPPyramidBackbone,
+    "csp_medium": CSPPyramidBackbone,
+    "csp_large": CSPPyramidBackbone,
+    "csp_xlarge": CSPPyramidBackbone,
 }
 
 
@@ -84,13 +97,14 @@ def create_backbone(
 
     backbone_cls = _BACKBONE_REGISTRY[name]
 
-    # ResNet, MobileNetV3, ConvNeXt, and Swin all accept (variant, pretrained).
+    # All backbone families accept (variant, pretrained).
     return backbone_cls(name, pretrained=pretrained)  # type: ignore[call-arg]
 
 
 __all__ = [
     "BackboneName",
     "BaseBackbone",
+    "CSPPyramidBackbone",
     "ConvNeXtBackbone",
     "FeatureInfo",
     "MobileNetV3Backbone",

@@ -7,26 +7,31 @@ heads. Supported architectures:
 - **FPN**: Feature Pyramid Network for top-down feature fusion.
 - **PANet**: Path Aggregation Network with bottom-up augmentation.
 - **BiFPN**: Bidirectional Feature Pyramid Network with weighted fusion.
+- **CSPPANet**: Bidirectional pyramid with concatenation and cross-stage
+  partial refinement.
 """
 
 from __future__ import annotations
 
-from typing import Literal
-
-from torch import nn
+from typing import TYPE_CHECKING, Literal
 
 from corecv.models.necks.bifpn import BiFPN
+from corecv.models.necks.csppanet import CSPPANet
 from corecv.models.necks.fpn import FPN
 from corecv.models.necks.panet import PANet
 
+if TYPE_CHECKING:
+    from torch import nn
+
 # Union of all supported neck names.
-NeckName = Literal["fpn", "panet", "bifpn"]
+NeckName = Literal["fpn", "panet", "bifpn", "csppanet"]
 
 # Registry mapping name -> neck class.
 _NECK_REGISTRY: dict[str, type[nn.Module]] = {
     "fpn": FPN,
     "panet": PANet,
     "bifpn": BiFPN,
+    "csppanet": CSPPANet,
 }
 
 
@@ -34,7 +39,7 @@ def create_neck(
     name: NeckName,
     in_channels: list[int],
     out_channels: int = 256,
-    **kwargs,
+    **kwargs: object,
 ) -> nn.Module:
     """Create a neck module by name.
 
@@ -54,6 +59,7 @@ def create_neck(
     Example:
         >>> from corecv.models.necks import create_neck
         >>> neck = create_neck("fpn", in_channels=[64, 128, 256], out_channels=256)
+
     """
     if name not in _NECK_REGISTRY:
         msg = f"Unknown neck: {name!r}. Choose from {list(_NECK_REGISTRY)}"
@@ -64,8 +70,9 @@ def create_neck(
 
 
 __all__ = [
-    "BiFPN",
     "FPN",
+    "BiFPN",
+    "CSPPANet",
     "NeckName",
     "PANet",
     "create_neck",

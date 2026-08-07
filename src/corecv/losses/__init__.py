@@ -4,6 +4,7 @@ from corecv.losses.classification import (
     ClassificationCrossEntropyLoss,
     ClassificationFocalLoss,
 )
+from corecv.losses.detection import DualHeadDetectionLoss
 from corecv.losses.segmentation import (
     SegmentationCrossEntropyLoss,
     SegmentationDiceLoss,
@@ -13,6 +14,7 @@ from corecv.losses.segmentation import (
 __all__ = [
     "ClassificationCrossEntropyLoss",
     "ClassificationFocalLoss",
+    "DualHeadDetectionLoss",
     "SegmentationCrossEntropyLoss",
     "SegmentationDiceLoss",
     "SegmentationFocalLoss",

@@ -33,6 +33,7 @@ from torch.amp import autocast, GradScaler
 from torch.utils.data import DataLoader
 
 from corecv.metrics.classification import ClassificationMetrics
+from corecv.metrics.detection import DetectionMetrics
 from corecv.metrics.segmentation import SegmentationMetrics
 
 if TYPE_CHECKING:
@@ -124,15 +125,19 @@ class Trainer:
         """Initialize the trainer.
 
         Args:
-            task: Task to train. One of ``classification`` or
-                ``segmentation``.
+            task: Task to train. One of ``classification``,
+                ``segmentation``, or ``detection``.
             model: Model mapping ``(B, 3, H, W)`` to the task-specific
-                output format.
+                output format. Detection models return a
+                ``(preds_o2m, preds_o2o)`` tuple.
             train_loader: Training data loader yielding dicts with
                 ``"images"`` plus a task-specific target key (``"labels"``
-                for classification, ``"masks"`` for segmentation).
+                for classification, ``"masks"`` for segmentation, and
+                ``"targets"`` for detection).
             loss_fn: Loss function accepting ``(logits, targets)`` and
-                returning a scalar loss tensor.
+                returning a scalar loss tensor. For detection it accepts
+                ``(preds_o2m, preds_o2o, targets)`` and returns a dictionary
+                with a ``loss_total`` entry.
             optimizer: Optimizer instance for gradient-based updates.
             num_classes: Number of target classes.
             device: Target device string or :class:`torch.device`.
@@ -183,6 +188,11 @@ class Trainer:
             self._val_metrics = SegmentationMetrics(num_classes=num_classes)
             self.target_key = "masks"
             default_monitor = "dice"
+        elif task == "detection":
+            self._train_metrics = DetectionMetrics(num_classes=num_classes)
+            self._val_metrics = DetectionMetrics(num_classes=num_classes)
+            self.target_key = "targets"
+            default_monitor = "mAP50"
         else:
             raise ValueError(f"Unknown task: {task}")
 
@@ -192,6 +202,51 @@ class Trainer:
         self.checkpoint_path = Path(checkpoint_path) if checkpoint_path is not None else None
         self.best_score: float | None = None
         self.best_epoch: int = 0
+
+    def _compute_loss(self, outputs: object, targets: Tensor) -> Tensor:
+        """Compute the loss for the current task.
+
+        For detection, the model returns a ``(preds_o2m, preds_o2o)`` tuple
+        and the loss returns a dictionary; the ``loss_total`` entry is used.
+
+        Args:
+            outputs: Model output for the current batch.
+            targets: Ground-truth targets for the current batch.
+
+        Returns:
+            Scalar loss tensor.
+
+        """
+        if self.task == "detection":
+            preds_o2m, preds_o2o = outputs
+            return self.loss_fn(preds_o2m, preds_o2o, targets)["loss_total"]
+        return self.loss_fn(outputs, targets)
+
+    def _update_metrics(
+        self,
+        metrics: ClassificationMetrics | DetectionMetrics | SegmentationMetrics,
+        outputs: object,
+        targets: Tensor,
+        *,
+        detach: bool,
+    ) -> None:
+        """Update task metrics with the model output for a batch.
+
+        Args:
+            metrics: Metrics instance to update.
+            outputs: Model output for the current batch.
+            targets: Ground-truth targets for the current batch.
+            detach: Whether to detach the output before updating (used in the
+                training loop).
+
+        """
+        if self.task == "detection":
+            _, preds_o2o = outputs
+            metrics.update(preds_o2o, targets)
+        elif detach:
+            metrics.update(outputs.detach(), targets)
+        else:
+            metrics.update(outputs, targets)
 
     def train_epoch(self) -> dict[str, float]:
         """Execute a single training epoch.
@@ -213,14 +268,14 @@ class Trainer:
 
             self.optimizer.zero_grad()
             with autocast(enabled=self.use_amp, device_type=self.device.type):
-                logits = self.model(images)
-                loss = self.loss_fn(logits, targets)
+                outputs = self.model(images)
+                loss = self._compute_loss(outputs, targets)
 
             self.scaler.scale(loss).backward()
             self.scaler.step(self.optimizer)
             self.scaler.update()
 
-            self._train_metrics.update(logits.detach(), targets)
+            self._update_metrics(self._train_metrics, outputs, targets, detach=True)
             total_loss += loss.item()
             num_batches += 1
 
@@ -255,10 +310,10 @@ class Trainer:
                 targets = batch[self.target_key]
 
                 with autocast(device_type=self.device.type, enabled=self.use_amp):
-                    logits = self.model(images)
-                    loss = self.loss_fn(logits, targets)
+                    outputs = self.model(images)
+                    loss = self._compute_loss(outputs, targets)
 
-                self._val_metrics.update(logits, targets)
+                self._update_metrics(self._val_metrics, outputs, targets, detach=False)
                 total_loss += loss.item()
                 num_batches += 1
 
@@ -290,6 +345,8 @@ class Trainer:
         self.epochs_without_improvement = 0
 
         for epoch in range(1, num_epochs + 1):
+            if hasattr(self.loss_fn, "set_progress"):
+                self.loss_fn.set_progress(epoch / num_epochs)
             train_metrics = self.train_epoch()
             val_metrics = self.validate() if has_val else {}
 
